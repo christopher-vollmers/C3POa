@@ -19,15 +19,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Reorients/demuxes/trims consensus reads.',
                                      add_help=True,
                                      prefix_chars='-')
-    parser.add_argument('--input_fasta_file', '-i', type=str, action='store',
-                        help='Fasta file with consensus called R2C2 reads')
-    parser.add_argument('--output_path', '-o', type=str, action='store', default=os.getcwd(),
-                        help='''Directory where all the files will end up.
-                                Defaults to your current directory.''')
+    parser.add_argument('--input_folder', '-i', type=str, action='store',
+                        help='folder that contains the output of the C3POa.py tool. Should be folders containing R2C2_Consensus.fasta(.gz) files')
     parser.add_argument('--adapter_file', '-a', type=str, action='store',
                         help='Fasta file with adapter (3 and 5 prime) sequences')
-    parser.add_argument('--index_file', '-x', type=str, action='store',
-                        help='Fasta file with oligo dT indexes')
+    parser.add_argument('--samplesheet', '-x', type=str, action='store',
+                        help='samplesheet with header line indicating where to find indexes')
     parser.add_argument('--config', '-c', type=str, action='store', default='',
                         help='If you want to use a config file to specify paths to\
                               programs, specify them here. Use for poa, racon, water,\
@@ -40,12 +37,7 @@ def parse_args():
                                 are expected to be undirectional and only one sequence
                                 named "Adapter" should be in your adapter_file in fasta
                                 format''')
-    parser.add_argument('--trim', '-t', action='store_true',
-                        help='Use this flag to trim the adapters off the ends of \
-                              your sequences.')
-    parser.add_argument('--barcoded', '-b', action='store_true', default=False,
-                        help='Use if postprocessing 10x reads. Produces a separate \
-                              file with 10x barcode sequences')
+
     parser.add_argument('--threads', '-n', type=int, default=1,
                         help='Number of threads to use during multiprocessing. Defaults to 1.')
     parser.add_argument('--groupSize', '-g', type=int, default=1000,
@@ -61,7 +53,7 @@ def parse_args():
         sys.exit(0)
     return parser.parse_args()
 
-def configReader(path, configIn):
+def configReader(configIn):
     progs = {}
     with open(configIn) as f:
         for line in f:
@@ -109,8 +101,8 @@ def remove_files(path, pattern):
     for d in tqdm(glob(path + pattern), desc='Removing files'):
         shutil.rmtree(d)
 
-def process(args, reads, blat, iteration, idx_to_seq, seq_to_idx):
-    tmp_dir = args.output_path + 'post_tmp_' + str(iteration) + '/'
+def process(args, reads, blat, iteration,subfolder):
+    tmp_dir = subfolder + 'post_tmp_' + str(iteration) + '/'
     if not os.path.isdir(tmp_dir):
         os.mkdir(tmp_dir)
     tmp_fa = tmp_dir + 'tmp_for_blat.fasta'
@@ -123,10 +115,13 @@ def process(args, reads, blat, iteration, idx_to_seq, seq_to_idx):
     run_blat(tmp_dir, tmp_fa, args.adapter_file, blat)
     os.remove(tmp_fa)
     adapter_dict = parse_blat(tmp_dir, reads)
-    write_fasta_file(args, tmp_dir, adapter_dict, reads, seq_to_idx, idx_to_seq)
+    write_fasta_file(args, tmp_dir, adapter_dict, reads)
 
-def chunk_process(num_reads, args, blat):
+def chunk_process(input_fasta,subfolder, args, blat):
     '''Split the input fasta into chunks and process'''
+
+    num_reads=get_file_len(input_fasta)
+
     if args.blatThreads:
         chunk_size = (num_reads // args.threads) + 1
     else:
@@ -134,21 +129,16 @@ def chunk_process(num_reads, args, blat):
     if chunk_size > num_reads:
         chunk_size = num_reads
 
-    if args.index_file:
-        idx_to_seq, seq_to_idx = read_fasta(args.index_file, True)
-    else:
-        idx_to_seq, seq_to_idx = {}, {}
-
     pool = mp.Pool(args.threads)
     pbar = tqdm(total=num_reads // chunk_size + 1, desc='Aligning with BLAT and processing')
     iteration, current_num, tmp_reads, target = 1, 0, {}, chunk_size
-    for read in mm.fastx_read(args.input_fasta_file, read_comment=False):
+    for read in mm.fastx_read(input_fasta, read_comment=False):
         tmp_reads[read[0]] = read[1]
         current_num += 1
         if current_num == target:
             pool.apply_async(
                 process,
-                args=(args, tmp_reads, blat, iteration, idx_to_seq, seq_to_idx),
+                args=(args, tmp_reads, blat, iteration, subfolder),
                 callback=lambda _: pbar.update(1)
             )
             iteration += 1
@@ -161,59 +151,37 @@ def chunk_process(num_reads, args, blat):
     pbar.close()
 
     flc = 'R2C2_full_length_consensus_reads.fasta'
+    flc_a = 'R2C2_full_length_consensus_reads.adapters.fasta'
     flc_left = 'R2C2_full_length_consensus_reads_left_splint.fasta'
     flc_right = 'R2C2_full_length_consensus_reads_right_splint.fasta'
     pool = mp.Pool(args.threads)
     print('Catting files', file=sys.stderr)
-    if idx_to_seq:
-        idx_to_seq['no_index_found'] = ''
-        for idx in idx_to_seq.keys():
-            idx += '/'
-            if not os.path.isdir(args.output_path + idx):
-                os.mkdir(args.output_path + idx)
-            pattern = 'post_tmp*/' + idx
-            pool.apply_async(cat_files, args=(
-                    args.output_path,
-                    pattern + flc,
-                    args.output_path + idx + flc,
-                    0, args.compress_output))
-            pool.apply_async(cat_files, args=(
-                    args.output_path,
-                    pattern + flc_left,
-                    args.output_path + idx + flc_left,
-                    1, args.compress_output))
-            pool.apply_async(cat_files, args=(
-                    args.output_path,
-                    pattern + flc_right,
-                    args.output_path + idx + flc_right,
-                    2, args.compress_output))
-        mux_tsvs = 'post_tmp*/R2C2_oligodT_multiplexing.tsv'
-        mux_tsv_final = args.output_path + 'R2C2_oligodT_multiplexing.tsv'
-        pool.apply_async(cat_files, args=(args.output_path, mux_tsvs, mux_tsv_final, 3, False))
-    else:
-        pattern = 'post_tmp*/'
-        pool.apply_async(cat_files, args=(
-                args.output_path,
-                pattern + flc,
-                args.output_path + flc,
-                0, args.compress_output))
-        pool.apply_async(cat_files, args=(
-                args.output_path,
-                pattern + flc_left,
-                args.output_path + flc_left,
-                1, args.compress_output))
-        pool.apply_async(cat_files, args=(
-                args.output_path,
-                pattern + flc_right,
-                args.output_path + flc_right,
-                2, args.compress_output))
-        if args.barcoded:
-            flc_bc = pattern + 'R2C2_full_length_consensus_reads_10X_sequences.fasta'
-            flc_bc_final = args.output_path + 'R2C2_full_length_consensus_reads_10X_sequences.fasta'
-            pool.apply_async(cat_files, args=(args.output_path, flc_bc, flc_bc_final, 3, args.compress_output))
+    pattern = 'post_tmp*/'
+    pool.apply_async(cat_files, args=(
+            subfolder,
+            pattern + flc,
+            subfolder + '/' + flc,
+            0, args.compress_output))
+    pool.apply_async(cat_files, args=(
+            subfolder,
+            pattern + flc_left,
+            subfolder + '/' + flc_left,
+            1, args.compress_output))
+    pool.apply_async(cat_files, args=(
+            subfolder,
+            pattern + flc_right,
+            subfolder + '/' + flc_right,
+            2, args.compress_output))
+    pool.apply_async(cat_files, args=(
+            subfolder,
+            pattern + flc_a,
+            subfolder + '/' + flc_a,
+            3, args.compress_output))
+
+
     pool.close()
     pool.join()
-    remove_files(args.output_path, 'post_tmp*')
+    remove_files(subfolder, 'post_tmp*')
 
 def read_fasta(inFile, indexes):
     '''Reads in FASTA files, returns a dict of header:sequence'''
@@ -279,29 +247,24 @@ def match_index(seq, seq_to_idx):
     for idx, distances in dist_dict.items():
         dist_list.append((idx, min(distances)))
     dist_list = sorted(dist_list, key=lambda x: x[1])
-    if dist_list[0][1] < 2 and dist_list[1][1] - dist_list[0][1] > 1:
-        return dist_list[0][0]
-    else:
-        return '-'
+    match = 'Undetermined'
+    if dist_list:
+        if dist_list[0][1] < 2:
+            if len(dist_list)>1:
+                if dist_list[1][1] - dist_list[0][1] > 1:
+                    match = dist_list[0][0]
+            else:
+                match = dist_list[0][0]
 
-def write_fasta_file(args, path, adapter_dict, reads, seq_to_idx, idx_to_seq):
+    return match
+
+def write_fasta_file(args, path, adapter_dict, reads):
     undirectional = args.undirectional
-    barcoded = args.barcoded
-    trim = args.trim
 
-    odT = True if seq_to_idx else False
-
-    if barcoded:
-        out10X = open(path + 'R2C2_full_length_consensus_reads_10X_sequences.fasta', 'w')
-    if odT:
-        outdT = open(path + 'R2C2_oligodT_multiplexing.tsv', 'w')
-        for idx in idx_to_seq:
-            if os.path.exists(path + idx):
-                shutil.rmtree(path + idx)
-    else:
-        out = open(path + 'R2C2_full_length_consensus_reads.fasta', 'w')
-        out3 = open(path + 'R2C2_full_length_consensus_reads_left_splint.fasta', 'w')
-        out5 = open(path + 'R2C2_full_length_consensus_reads_right_splint.fasta', 'w')
+    out = open(path + 'R2C2_full_length_consensus_reads.fasta', 'w')
+    outa = open(path + 'R2C2_full_length_consensus_reads.adapters.fasta', 'w')
+    out3 = open(path + 'R2C2_full_length_consensus_reads_left_splint.fasta', 'w')
+    out5 = open(path + 'R2C2_full_length_consensus_reads_right_splint.fasta', 'w')
 
     for name, sequence in (tqdm(reads.items()) if args.threads==1  else reads.items()):
         adapter_plus = sorted(adapter_dict[name]['+'],
@@ -335,100 +298,182 @@ def write_fasta_file(args, path, adapter_dict, reads, seq_to_idx, idx_to_seq):
         else:
             continue
 
-        if odT:
-            outdT.write('%s\t%s\t%s\n' %(
-                name,
-                mm.revcomp(sequence[minus_positions[0]-16:minus_positions[0]+4]),
-                sequence[plus_positions[0]-4:plus_positions[0]+16])
-            )
-            reverse_index, forward_index = '-', '-'
-            forward_index = match_index(sequence[plus_positions[0]-4:plus_positions[0]+16], seq_to_idx)
-            reverse_index = match_index(mm.revcomp(sequence[minus_positions[0]-16:minus_positions[0]+4]), seq_to_idx)
-
-            demux = False
-            if forward_index in idx_to_seq and reverse_index not in idx_to_seq:
-                direction, idx_name, demux = '-', forward_index, True
-            if reverse_index in idx_to_seq and forward_index not in idx_to_seq:
-                direction, idx_name, demux = '+', reverse_index, True
-            if not demux:
-                idx_name = 'no_index_found'
-
-            demux_path = path + idx_name + '/'
-            if not os.path.isdir(demux_path):
-                os.mkdir(demux_path)
-
-            out = open(demux_path + 'R2C2_full_length_consensus_reads.fasta', 'a+')
-            out3 = open(demux_path + 'R2C2_full_length_consensus_reads_left_splint.fasta', 'a+')
-            out5 = open(demux_path + 'R2C2_full_length_consensus_reads_right_splint.fasta', 'a+')
 
         seq = sequence[plus_positions[0]:minus_positions[0]]
-        ada = sequence[max(plus_positions[0]-40, 0):minus_positions[0]+40]
+
+        ada1 = sequence[max(0,plus_positions[0]-40):plus_positions[0]]
+        ada2 = sequence[minus_positions[0]:minus_positions[0]+40]
+
         name += '_' + str(len(seq))
         if direction == '+':
-            if trim:
-                out.write('>%s\n%s\n' %(name, seq))
-            else:
-                out.write('>%s\n%s\n' %(name, ada))
+            out.write('>%s\n%s\n' %(name, seq))
+            outa.write('>%s\t%s\t%s\n' %(name, ada1, ada2))
             out5.write('>%s\n%s\n' %(name, mm.revcomp(sequence[:plus_positions[0]])))
             out3.write('>%s\n%s\n' %(name, sequence[minus_positions[0]:]))
-            if barcoded:
-                out10X.write('>%s\n%splus\n' %(name, mm.revcomp(sequence[minus_positions[0]-40:minus_positions[0]])))
+
         elif direction == '-':
-            if trim:
-                out.write('>%s\n%s\n' %(name, mm.revcomp(seq)))
-            else:
-                out.write('>%s\n%s\n' %(name, mm.revcomp(ada)))
+            out.write('>%s\n%s\n' %(name, mm.revcomp(seq)))
+            outa.write('>%s\t%s\t%s\n' %(name, mm.revcomp(ada2),mm.revcomp(ada1)))
             out3.write('>%s\n%s\n' %(name, mm.revcomp(sequence[:plus_positions[0]+40])))
             out5.write('>%s\n%s\n' %(name, sequence[minus_positions[0]:]))
-            if barcoded:
-                out10X.write('>%s\n%sminus\n' %(name, sequence[plus_positions[0]:plus_positions[0]+40]))
 
-        if odT:
+
+
+    out.close()
+    outa.close()
+    out3.close()
+    out5.close()
+
+
+
+
+
+def readSamplesheet(readFolder,sampleSheet):
+
+    countDict={}
+    countDict['All']=0
+    countDict['Undetermined']=0
+
+    if os.path.exists(readFolder+'/demultiplexed'):
+        os.system('rm -r %s/demultiplexed' %(readFolder))
+    os.system('mkdir %s/demultiplexed' %(readFolder))
+    indexDict={}
+    lineCounter=0
+    SplintOnly=False
+
+    out=open(readFolder+'/demultiplexed/Undetermined.fasta','w')
+    out.close()
+    for line in open(sampleSheet):
+        lineCounter+=1
+        if lineCounter==1:
+            categories=line.strip().split('\t')
+            if categories[0]=='Name' and categories[1]=='Splint':
+                indexes=''
+                if len(categories)>2:
+                    indexes=categories[2:]
+                    for index in indexes:
+                        if 'E' in index and len(indexes)>1:
+                            print('samplesheet is not formatted properly: if using "E" index, it has to be the only index')
+            else:
+                print('samplesheet is not formatted properly: Needs columns named "Name" and "Splint"')
+                sys.exit(1)
+
+        else:
+            a=line.strip().split('\t')
+            libraryName=a[0]
+            out=open(readFolder+'/demultiplexed/'+libraryName+'.fasta','w')
             out.close()
-            out3.close()
-            out5.close()
+            countDict[libraryName]=0
+            Splint=a[1]
+            if Splint not in indexDict:
+                indexDict[Splint]={}
+            if indexes:
+                sequences=('_').join(a[2:])
+                indexDict[Splint][sequences]=libraryName
+            else:
+                SplintOnly=True
+                indexDict[Splint]=libraryName
 
-    if not odT:
-        out.close()
-        out3.close()
-        out5.close()
-    if barcoded:
-        out10X.close()
-    if odT:
-        outdT.close()
+    return indexDict, indexes, SplintOnly, countDict
+
+# print(indexDict)
+counter=0
+
+def demultiplex(seq,seq_to_idx):
+    matchSet=set()
+    for index,entries in seq_to_idx.items():
+        if index[0]=='E':
+            Actual = index[1]
+            Dir = Actual
+            boundaries = index[3:-1].split(':')
+            readseq1 = seq[int(boundaries[0]):int(boundaries[1])]
+            readseq2 = mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
+            left = match_index(readseq1,entries)
+            if left == 'Undetermined':
+                right = match_index(readseq2,entries)
+                if right == 'Undetermined':
+                    matchSet.add('Undetermined')
+                else:
+                    matchSet.add(right)
+                    Dir='3'
+            else:
+                matchSet.add(left)
+                Dir='5'
+            if Actual!=Dir:
+                seq=mm.revcomp(seq)
+
+        elif index[0]=='5':
+            boundaries=index[2:-1].split(':')
+            readseq=seq[int(boundaries[0]):int(boundaries[1])]
+            matchSet.add(match_index(readseq,entries))
+
+        elif index[0]=='3':
+            boundaries=index[2:-1].split(':')
+            readseq=mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
+            matchSet.add(match_index(readseq,entries))
+
+    if len(matchSet)>1:
+        libraryName = 'Undetermined'
+    else:
+        libraryName = list(matchSet)[0]
+    return libraryName,seq
+
 
 def main(args):
-    if not args.output_path.endswith('/'):
-        args.output_path += '/'
 
     if args.config:
-        progs = configReader(args.output_path, args.config)
+        progs = configReader(args.config)
         blat = progs['blat']
     else:
         blat = 'blat'
 
-    if args.undirectional and args.barcoded:
-        print('Error: undirectional and barcoded are mutually exclusive.')
-        sys.exit(1)
 
-    if args.threads > 1:
-        num_reads = get_file_len(args.input_fasta_file)
-        chunk_process(num_reads, args, blat)
-    else:
-        reads = read_fasta(args.input_fasta_file, False)
-        
-        if args.index_file:
-            idx_to_seq, seq_to_idx = read_fasta(args.index_file, True)
-        else:
-            idx_to_seq, seq_to_idx = {}, {}
+    input_folder=args.input_folder
+    for folder in os.listdir(input_folder):
+        subfolder=input_folder+'/'+folder
+        if os.path.isdir(subfolder):
+            for file in os.listdir(subfolder):
+                if 'R2C2_Consensus.fasta' in file:
+                    print(subfolder, file)
+                    input_fasta=subfolder+'/'+file
+                    chunk_process(input_fasta,subfolder, args, blat)
 
-        run_blat(args.output_path, args.input_fasta_file, args.adapter_file, blat)
-        adapter_dict = parse_blat(args.output_path, reads)
-        write_fasta_file(args, args.output_path, adapter_dict, reads, seq_to_idx, idx_to_seq)
+    if args.samplesheet:
+        indexDict, indexes, SplintOnly, countDict = readSamplesheet(input_folder,args.samplesheet)
+        for folder in os.listdir(input_folder):
+            subfolder=input_folder+'/'+folder
+            if os.path.isdir(subfolder):
+                if folder in indexDict:
+                    seq_to_idx={}
+                    for sequence,name in indexDict[folder].items():
+                        sequences = sequence.split('_')
+                        for i in range(0,len(sequences),1):
+                            if indexes[i] not in seq_to_idx:
+                                seq_to_idx[indexes[i]]={}
+                            seq_to_idx[indexes[i]][sequences[i]] = name
+
+                    readFile=subfolder+'/R2C2_full_length_consensus_reads.fasta'
+                    if args.compress_output:
+                        readFile+='.gz'
+                    for name,seq,q in mm.fastx_read(readFile):
+                        countDict['All']+=1
+                        if len(seq)<30:
+                            libraryName = 'Undetermined'
+                        elif SplintOnly:
+                            libraryName = indexDict[folder]
+                        else:
+                            libraryName, seq = demultiplex(seq,seq_to_idx)
+                        out=open(input_folder+'/demultiplexed/'+libraryName+'.fasta','a')
+                        out.write('>%s\n%s\n' %(name,seq))
+                        out.close()
+                        countDict[libraryName]+=1
+
+
+
 
 if __name__ == '__main__':
     args = parse_args()
-    if not args.input_fasta_file or not args.adapter_file:
-        print('Reads (--input_fasta_file/-i) and adapter (--adapter_file/-a) are required', file=sys.stderr)
+    if not args.input_folder or not args.adapter_file:
+        print('Reads (--input_folder/-i) and adapter (--adapter_file/-a) are required', file=sys.stderr)
         sys.exit(1)
     main(args)

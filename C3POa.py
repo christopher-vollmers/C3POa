@@ -21,7 +21,7 @@ from preprocess import preprocess
 from call_peaks import call_peaks
 from determine_consensus import determine_consensus
 
-VERSION = 'v2.2.3'
+VERSION = 'v2.3.0'
 
 def parse_args():
     '''Parses arguments.'''

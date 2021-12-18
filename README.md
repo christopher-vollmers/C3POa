@@ -1,6 +1,6 @@
 # C3POa
 
-[![Github release](https://img.shields.io/github/tag/rvolden/C3POa.svg?label=Version)](https://github.com/christopher-vollmers/C3POa/tags)
+[![Github release](https://img.shields.io/github/tag/christopher-vollmers/C3POa.svg?label=Version)](https://github.com/christopher-vollmers/C3POa/tags)
 [![Published in PNAS](https://img.shields.io/badge/Published%20in-PNAS-blue.svg)](https://doi.org/10.1073/pnas.1806447115)
 [![GPL license](https://img.shields.io/badge/License-GPL-blue.svg)](http://perso.crans.org/besson/LICENSE.html)
 

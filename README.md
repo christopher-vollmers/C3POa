@@ -156,8 +156,8 @@ If given a fasta of oligo dT indexes, it will also demux the reads by index.
 ```
 
 ```bash
-python3 C3POa_postprocessing.py -i /path/to/consensus.fasta -o out_path
-                                -c /path/to/config_file -a /path/to/adapter.fasta
+python3 C3POa_postprocessing.py -i /path/to/C3POa_directory  
+                                -a /path/to/adapter.fasta
 ```
 
 # sample sheet format

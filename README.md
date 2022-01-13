@@ -81,6 +81,8 @@ Arguments:
 
 -s  sequence of DNA splint used in R2C2 protocol in fasta format
 
+optional: 
+
 -c  config file containing path to BLAT and racon binaries
 
 -q  only reads above this average quality will be retained (9 is recommended)
@@ -133,10 +135,10 @@ If given a fasta of oligo dT indexes, it will also demux the reads by index.
 ```
 -i  input_dir AND output_dir (has to be the output_dir used by C3POa.py)
 
--o  directory which output files will be written to
-
 -a  sequence of cDNA adapter sequences in fasta format. Sequence names must be
     '3Prime_adapter' and '5Prime_adapter' (or 'Adapter' if using -u flag)
+
+optional:
 
 -c  config file containing path to BLAT binary
 
@@ -147,6 +149,10 @@ If given a fasta of oligo dT indexes, it will also demux the reads by index.
 -u  use to ignore read directionality
 
 -g  group size (number of reads given to each thread, default 1000)
+
+-M  editdistance between read and best matching index in sample sheet has to be smaller than this number to return a match, default 2
+    
+-m  editdistance difference between read and best matching index and read and second best matching index has to be bigger than this number to return a match, default 1
 
 -bt split input by number of threads instead of groupSize
 

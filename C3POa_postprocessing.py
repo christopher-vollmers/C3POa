@@ -20,7 +20,7 @@ def parse_args():
                                      add_help=True,
                                      prefix_chars='-')
     parser.add_argument('--input_folder', '-i', type=str, action='store',
-                        help='folder that contains the output of the C3POa.py tool. Should be folders containing R2C2_Consensus.fasta(.gz) files')
+                        help='input_dir AND output_dir (has to be the output_dir used by C3POa.py)')
     parser.add_argument('--adapter_file', '-a', type=str, action='store',
                         help='Fasta file with adapter (3 and 5 prime) sequences')
     parser.add_argument('--samplesheet', '-x', type=str, action='store',
@@ -42,6 +42,10 @@ def parse_args():
                         help='Number of threads to use during multiprocessing. Defaults to 1.')
     parser.add_argument('--groupSize', '-g', type=int, default=1000,
                         help='Number of reads processed by each thread in each iteration. Defaults to 1000.')
+    parser.add_argument('--maxDist', '-M', type=int, default=2,
+                        help='editdistance between read and best matching index in sample sheet has to be smaller than this number to return a match')
+    parser.add_argument('--minDist', '-m', type=int, default=1,
+                        help='editdistance difference between read and best matching index and read and second best matching index has to be bigger than this number to return a match')
     parser.add_argument('--blatThreads', '-bt', action='store_true', default=False,
                         help='''Use to chunk blat across the number of threads instead of by groupSize (faster).''')
     parser.add_argument('--compress_output', '-co', action='store_true', default=False,
@@ -231,11 +235,12 @@ def parse_blat(path, reads):
                                                         position))
     return adapter_dict
 
-def match_index(seq, seq_to_idx):
+def match_index(seq, seq_to_idx,minDist,maxDist):
     dist_dict, dist_list = {}, []
     # there needs to be a better/more efficient way to do this.
     for position in range(len(seq)):
         for idx_seq, idx in seq_to_idx.items():
+            idx=tuple(sorted(list(idx)))
             if idx not in dist_dict:
                 dist_dict[idx] = []
             query = seq[position:position + len(idx_seq)]
@@ -247,11 +252,11 @@ def match_index(seq, seq_to_idx):
     for idx, distances in dist_dict.items():
         dist_list.append((idx, min(distances)))
     dist_list = sorted(dist_list, key=lambda x: x[1])
-    match = 'Undetermined'
+    match = tuple()
     if dist_list:
-        if dist_list[0][1] < 2:
+        if dist_list[0][1] < maxDist:
             if len(dist_list)>1:
-                if dist_list[1][1] - dist_list[0][1] > 1:
+                if dist_list[1][1] - dist_list[0][1] > minDist:
                     match = dist_list[0][0]
             else:
                 match = dist_list[0][0]
@@ -379,8 +384,8 @@ def readSamplesheet(readFolder,sampleSheet):
 # print(indexDict)
 counter=0
 
-def demultiplex(seq,seq_to_idx):
-    matchSet=set()
+def demultiplex(seq,seq_to_idx,minDist,maxDist):
+    matchSet=[]
     for index,entries in seq_to_idx.items():
         if index[0]=='E':
             Actual = index[1]
@@ -388,34 +393,46 @@ def demultiplex(seq,seq_to_idx):
             boundaries = index[3:-1].split(':')
             readseq1 = seq[int(boundaries[0]):int(boundaries[1])]
             readseq2 = mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
-            left = match_index(readseq1,entries)
-            if left == 'Undetermined':
-                right = match_index(readseq2,entries)
-                if right == 'Undetermined':
-                    matchSet.add('Undetermined')
+            left = match_index(readseq1,entries,minDist,maxDist)
+            if len(left) == 0:
+                right = match_index(readseq2,entries,minDist,maxDist)
+                if len(right) == 0:
+                    matchSet.append('Undetermined')
                 else:
-                    matchSet.add(right)
+                    matchSet.append(right)
                     Dir='3'
             else:
-                matchSet.add(left)
+                matchSet.append(left)
                 Dir='5'
             if Actual!=Dir:
                 seq=mm.revcomp(seq)
-
         elif index[0]=='5':
             boundaries=index[2:-1].split(':')
             readseq=seq[int(boundaries[0]):int(boundaries[1])]
-            matchSet.add(match_index(readseq,entries))
+            matchSet.append(match_index(readseq,entries,minDist,maxDist))
 
         elif index[0]=='3':
             boundaries=index[2:-1].split(':')
             readseq=mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
-            matchSet.add(match_index(readseq,entries))
+            matchSet.append(match_index(readseq,entries,minDist,maxDist))
 
-    if len(matchSet)>1:
+
+    if 'Undetermined' in matchSet:
         libraryName = 'Undetermined'
+    elif len(matchSet)==1:
+        if len(matchSet[0])==1:
+            libraryName = matchSet[0][0]
+        else:
+            libraryName = 'Undetermined'
     else:
-        libraryName = list(matchSet)[0]
+        root=set(matchSet[0])
+        for matches in matchSet[1:]:
+            root=root & set(matches)
+        if len(root)==1:
+            libraryName = list(root)[0]
+        else:
+            libraryName = 'Undetermined'
+    print(matchSet,libraryName)
     return libraryName,seq
 
 
@@ -429,6 +446,8 @@ def main(args):
 
 
     input_folder=args.input_folder
+    minDist=args.minDist
+    maxDist=args.maxDist
     for folder in os.listdir(input_folder):
         subfolder=input_folder+'/'+folder
         if os.path.isdir(subfolder):
@@ -450,7 +469,9 @@ def main(args):
                         for i in range(0,len(sequences),1):
                             if indexes[i] not in seq_to_idx:
                                 seq_to_idx[indexes[i]]={}
-                            seq_to_idx[indexes[i]][sequences[i]] = name
+                            if sequences[i] not in seq_to_idx[indexes[i]]:
+                                seq_to_idx[indexes[i]][sequences[i]]=set()
+                            seq_to_idx[indexes[i]][sequences[i]].add(name)
 
                     readFile=subfolder+'/R2C2_full_length_consensus_reads.fasta'
                     if args.compress_output:
@@ -462,7 +483,7 @@ def main(args):
                         elif SplintOnly:
                             libraryName = indexDict[folder]
                         else:
-                            libraryName, seq = demultiplex(seq,seq_to_idx)
+                            libraryName, seq = demultiplex(seq,seq_to_idx,minDist,maxDist)
                         out=open(input_folder+'/demultiplexed/'+libraryName+'.fasta','a')
                         out.write('>%s\n%s\n' %(name,seq))
                         out.close()

@@ -432,7 +432,6 @@ def demultiplex(seq,seq_to_idx,minDist,maxDist):
             libraryName = list(root)[0]
         else:
             libraryName = 'Undetermined'
-    print(matchSet,libraryName)
     return libraryName,seq
 
 

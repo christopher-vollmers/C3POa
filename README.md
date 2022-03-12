@@ -24,9 +24,8 @@ This version of C3POa changes a lot. The old gonk branch can be found [here](htt
 
 To fetch and build dependencies, use setup.sh.
 setup.sh will download and make the packages that you need to run C3POa (except for blat).
-You don't need to have these in your PATH, but if you don't, you'll need to use a [config file](example_config).
-The setup script **does not** install programs or add them to your path.
-If you use the setup script, you still need to put the paths into a config file (for blat and racon).
+
+The setup script **does not** install programs so you still need to put blat, and racon into your PATH.
 
 ```bash
 chmod +x setup.sh

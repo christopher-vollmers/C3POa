@@ -92,12 +92,14 @@ def cat_files(path, pattern, output, pos, compress):
         final_fh = gzip.open(output, 'wb+')
     else:
         final_fh = open(output, 'w+')
+    counter=0
     for f in tqdm(glob(path + pattern), position=pos):
         with open(f) as fh:
             for line in fh:
                 if compress:
                     line = line.encode()
                 final_fh.write(line)
+            counter+=1
     final_fh.close()
 
 def remove_files(path, pattern):
@@ -123,7 +125,6 @@ def process(args, reads, blat, iteration,subfolder):
 
 def chunk_process(input_fasta,subfolder, args, blat):
     '''Split the input fasta into chunks and process'''
-
     num_reads=get_file_len(input_fasta)
 
     if args.blatThreads:
@@ -185,6 +186,9 @@ def chunk_process(input_fasta,subfolder, args, blat):
 
     pool.close()
     pool.join()
+
+    print('\n'*3)
+
     remove_files(subfolder, 'post_tmp*')
 
 def read_fasta(inFile, indexes):
@@ -443,6 +447,7 @@ def main(args):
     else:
         blat = 'blat'
 
+    print('Finding adapters and trimming reads')
 
     input_folder=args.input_folder
     minDist=args.minDist
@@ -452,13 +457,16 @@ def main(args):
         if os.path.isdir(subfolder):
             for file in os.listdir(subfolder):
                 if 'R2C2_Consensus.fasta' in file:
-                    print(subfolder, file)
+                    print('working on', subfolder, file)
                     input_fasta=subfolder+'/'+file
                     chunk_process(input_fasta,subfolder, args, blat)
 
     if args.samplesheet:
+        print('\nSample sheet provided. Starting to demultiplex')
+        print('Reading sample sheet')
         indexDict, indexes, SplintOnly, countDict = readSamplesheet(input_folder,args.samplesheet)
         for folder in os.listdir(input_folder):
+            counter=0
             subfolder=input_folder+'/'+folder
             if os.path.isdir(subfolder):
                 if folder in indexDict:
@@ -473,22 +481,49 @@ def main(args):
                             seq_to_idx[indexes[i]][sequences[i]].add(name)
 
                     readFile=subfolder+'/R2C2_full_length_consensus_reads.fasta'
+                    print('working on '+readFile)
                     if args.compress_output:
                         readFile+='.gz'
+                    readDict={}
+                    threads=args.threads
                     for name,seq,q in mm.fastx_read(readFile):
                         countDict['All']+=1
-                        if len(seq)<30:
-                            libraryName = 'Undetermined'
-                        elif SplintOnly:
-                            libraryName = indexDict[folder]
-                        else:
-                            libraryName, seq = demultiplex(seq,seq_to_idx,minDist,maxDist)
-                        out=open(input_folder+'/demultiplexed/'+libraryName+'.fasta','a')
-                        out.write('>%s\n%s\n' %(name,seq))
-                        out.close()
-                        countDict[libraryName]+=1
+                        counter+=1
+                        if counter%threads not in readDict:
+                            readDict[counter%threads]=[]
+
+                        readDict[counter%threads].append((name,seq))
+
+                    pool = mp.Pool(processes=threads)
+                    print('Processing reads in batches')
+                    results={}
+                    for batch in readDict:
+                        results[batch]=pool.apply_async(batchProcess, args=(readDict[batch],seq_to_idx,minDist,maxDist,SplintOnly,batch))
+                    pool.close()
+                    pool.join()
+
+                    print('\n'*threads)
+                    print('Writing demultiplexed files')
+                    for batch, result in results.items():
+                        for name,seq,libraryName in result.get():
+                            out=open(input_folder+'/demultiplexed/'+libraryName+'.fasta','a')
+                            out.write('>%s\n%s\n' %(name,seq))
+                            out.close()
+                            countDict[libraryName]+=1
+        print('Finished demultiplexing')
 
 
+def batchProcess(reads,seq_to_idx,minDist,maxDist,SplintOnly,batch):
+    resultList=[]
+    for name,seq in tqdm(reads,position=batch):
+          if len(seq)<30:
+               libraryName = 'Undetermined'
+          elif SplintOnly:
+               libraryName = indexDict[folder]
+          else:
+               libraryName, seq = demultiplex(seq,seq_to_idx,minDist,maxDist)
+          resultList.append((name,seq,libraryName))
+    return (resultList)
 
 
 if __name__ == '__main__':

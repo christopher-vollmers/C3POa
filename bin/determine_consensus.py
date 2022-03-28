@@ -11,12 +11,12 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
     name, seq, qual = read[0], read[1], read[2]
     repeats = len(subreads)
 
-    if repeats == 0 and args.zero:
-        if len(dangling_subreads) == 2:
+    if repeats == 0:
+        if args.zero and len(dangling_subreads) == 2:
             final_cons = zero_repeats(name, seq, qual, dangling_subreads, qual_dangling_subreads, subread_file)
             if final_cons and len(final_cons) >= args.mdistcutoff:
                 return final_cons, 0
-
+        return '', 0
     # subread is the master subread fastq for this group
     subread_fh = open(subread_file, 'a+')
     # overlap file is where the mappy alignment will go (req. by racon)

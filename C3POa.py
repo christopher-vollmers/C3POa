@@ -50,8 +50,8 @@ def parse_args():
                         help='Use to exclude zero repeat reads. Defaults to True (includes zero repeats).')
     parser.add_argument('--numThreads', '-n', type=int, default=1,
                         help='Number of threads to use during multiprocessing. Defaults to 1.')
-    parser.add_argument('--groupSize', '-g', type=int, default=1000,
-                        help='Number of reads processed by each thread in each iteration. Defaults to 1000.')
+    parser.add_argument('--groupSize', '-g', type=int, default=100000,
+                        help='Number of reads processed by each thread in each iteration. Defaults to 100000.')
     parser.add_argument('--blatThreads', '-b', action='store_true', default=False,
                         help='''Use to chunk blat across the number of threads instead of by groupSize (faster).''')
     parser.add_argument('--compress_output', '-co', action='store_true', default=False,

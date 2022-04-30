@@ -47,6 +47,13 @@ Please follow the documentation in the blat readme for make instructions.
 
 After resolving all of the dependencies, you can run C3POa with python.
 
+```bash
+python3 C3POa.py -r reads.fastq -o path/to/where/C3POa/outputs/data/ -s splint.fasta -n 32
+python3 C3POa_postprocessing.py -i path/to/where/C3POa/outputs/data/ -a adapter.fasta -x sampleSheet
+```
+
+Note that C3POa_postprocessing.py takes the output folder of C3POa.py as input
+
 ## C3POa.py
 
 Preprocessing is now built in.
@@ -65,6 +72,7 @@ python3 C3POa.py -r reads.fastq
                  -o output/path 
                  -s splint.fasta 
                  -n 32 
+
 ```
 
 Arguments:

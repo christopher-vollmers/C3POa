@@ -6,26 +6,27 @@ import mappy as mm
 import os
 import subprocess
 from consensus import pairwise_consensus
+import time
 
-def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_dangling_subreads, racon, tmp_dir, subread_file):
+def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_dangling_subreads, racon, tmp_dir):
+    start=time.time()
     name, seq, qual = read[0], read[1], read[2]
     repeats = len(subreads)
+    subs=[]
 
     if repeats == 0:
         if args.zero and len(dangling_subreads) == 2:
-            final_cons = zero_repeats(name, seq, qual, dangling_subreads, qual_dangling_subreads, subread_file)
+            final_cons,subs = zero_repeats(name, seq, qual, dangling_subreads, qual_dangling_subreads,subs)
             if final_cons and len(final_cons) >= args.mdistcutoff:
-                return final_cons, 0
-        return '', 0
-    # subread is the master subread fastq for this group
-    subread_fh = open(subread_file, 'a+')
+                return final_cons, 0, subs
+        return '', 0, []
+
     # overlap file is where the mappy alignment will go (req. by racon)
     overlap_file = tmp_dir + '{name}_overlaps.paf'.format(name=name)
     overlap_fh = open(overlap_file, 'w+')
     # temporary subreads specific for the current read (req. by racon)
     tmp_subread_file = tmp_dir + '{name}_subreads.fastq'.format(name=name)
     tmp_subread_fh = open(tmp_subread_file, 'w+')
-
     # align subreads together using abPOA
     poa_aligner = poa.msa_aligner(match=5)
     if repeats == 1:
@@ -51,14 +52,13 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
     abpoa_fasta_fh = open(abpoa_fasta, 'w+')
     print('>{name}\n{seq}\n'.format(name=name, seq=abpoa_cons), file=abpoa_fasta_fh)
     abpoa_fasta_fh.close()
-
     # map each of the subreads to the poa consensus
     mm_align = mm.Aligner(seq=abpoa_cons, preset='map-ont')
     for i in range(repeats):
         subread = subreads[i]
         q = sub_qual[i]
         qname = name + '_' + str(i+1)
-        print('@{name}\n{sub}\n+\n{q}'.format(name=qname, sub=subread, q=q), file=subread_fh)
+        subs.append((qname,subread,q))
         print('@{name}\n{sub}\n+\n{q}'.format(name=qname, sub=subread, q=q), file=tmp_subread_fh)
         for hit in mm_align.map(subread):
             print("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
@@ -73,14 +73,13 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
             qname = name + '_' + str(j)
         else:
             qname = name + '_' + str(i+2)
-        print('@{name}\n{sub}\n+\n{q}'.format(name=qname, sub=subread, q=q), file=subread_fh)
+        subs.append((qname,subread,q))
         print('@{name}\n{sub}\n+\n{q}'.format(name=qname, sub=subread, q=q), file=tmp_subread_fh)
         for hit in mm_align.map(subread):
             print("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
                 qname, str(len(subread)), hit.q_st, hit.q_en,
                 hit.strand, name, hit.ctg_len, hit.r_st,
                 hit.r_en, hit.mlen, hit.blen, hit.mapq), file=overlap_fh)
-    subread_fh.close()
     overlap_fh.close()
     tmp_subread_fh.close()
 
@@ -101,24 +100,19 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
     tmp_files = ' '.join([overlap_file, tmp_subread_file, abpoa_fasta, racon_cons_file])
     os.system('rm {tmp_files}'.format(tmp_files=tmp_files))
 
-    return final_cons, repeats
+    return final_cons, repeats, subs
 
-def zero_repeats(name, seq, qual, subreads, sub_qual, subread_file):
+def zero_repeats(name, seq, qual, subreads, sub_qual,subs):
     # subread is the master subread fastq for this group
-    subread_fh = open(subread_file, 'a+')
     for i in range(len(subreads)):
-        print('@{name}\n{sub}\n+\n{q}'.format(name=name + '_' + str(i),
-                                              sub=subreads[i],
-                                              q=sub_qual[i]),
-                                              file=subread_fh)
-    subread_fh.close()
+        subs.append((name + '_' + str(i),subreads[i],sub_qual[i]))
 
     mappy_res = []
     mm_align = mm.Aligner(seq=subreads[0], preset='map-ont', scoring=(20, 7, 10, 5))
     for hit in mm_align.map(subreads[1]):
         mappy_res = [hit.r_st, hit.r_en, hit.q_st, hit.q_en]
     if not mappy_res:
-        return ''
+        return '',subs
 
     left = subreads[1][:mappy_res[2]]
     right = subreads[0][mappy_res[1]:]
@@ -130,7 +124,7 @@ def zero_repeats(name, seq, qual, subreads, sub_qual, subread_file):
     poa_aligner = poa.msa_aligner(match=5)
     res = poa_aligner.msa([overlap_seq1, overlap_seq2], out_cons=False, out_msa=True)
     if not res.msa_seq:
-        return ''
+        return '',subs
     abpoa_cons = pairwise_consensus(res.msa_seq, [overlap_seq1, overlap_seq2], [overlap_qual1, overlap_qual2])
     corrected_cons = left + abpoa_cons + right
-    return corrected_cons
+    return corrected_cons,subs

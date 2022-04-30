@@ -12,6 +12,7 @@ from tqdm import tqdm
 import gc
 import gzip
 import shutil
+import time
 from glob import glob
 
 PATH = '/'.join(os.path.realpath(__file__).split('/')[:-1]) + '/bin/'
@@ -55,6 +56,7 @@ def parse_args():
                         help='''Use to chunk blat across the number of threads instead of by groupSize (faster).''')
     parser.add_argument('--compress_output', '-co', action='store_true', default=False,
                         help='Use to compress (gzip) both the consensus fasta and subread fastq output files.')
+
     parser.add_argument('--version', '-v', action='version', version=VERSION, help='Prints the C3POa version.')
 
     if len(sys.argv) == 1:
@@ -106,32 +108,28 @@ def remove_files(path, pattern):
 def rounding(x, base):
     '''Rounds to the nearest base, we use 50'''
     return int(base * round(float(x) / base))
+def analyze_reads(args, read, splint, read_adapter, adapter_set, index, racon, tmp_dir,number,total):
 
-def analyze_reads(args, reads, splint_dict, adapter_dict, adapter_set, iteration, racon):
     penalty, iters, window, order = 20, 3, 41, 2
-    for read in reads:
-        name, seq, qual = read[0], read[1], read[2]
-        seq_len = len(seq)
-        if not adapter_dict.get(name):
-            continue
-        strand = adapter_dict[name][1]
-        if strand == '-':
-            # use reverse complement of the splint
-            splint = splint_dict[adapter_dict[name][0]][1]
-        else:
-            splint = splint_dict[adapter_dict[name][0]][0]
-        scores = conk.conk(splint, seq, penalty)
-        peaks = call_peaks(scores, args.mdistcutoff, iters, window, order)
-        if not list(peaks):
-            continue
+#        penalty, iters, window, order = 30, 3, 15, 2 #shorter splint
+    name, seq, qual = read[0], read[1], read[2]
+    seq_len = len(seq)
+    use=False
+    read_consensus = ''
+    subs=[]
+    scores = conk.conk(splint, seq, penalty)
+    start=time.time()
+    peaks = call_peaks(scores, args.mdistcutoff, iters, window, order)
+    if  list(peaks):
         peaks = list(peaks + len(splint) // 2)
         for i in range(len(peaks) - 1, -1, -1):
             if peaks[i] >= seq_len:
                 del peaks[i]
-        if not peaks:
-            continue
+        if peaks:
+            use=True
 
         # check for outliers in subread length
+    if use:
         subreads, qual_subreads, dangling_subreads, qual_dangling_subreads = [], [], [], []
         if len(peaks) > 1:
             subread_lens = np.diff(peaks)
@@ -154,23 +152,21 @@ def analyze_reads(args, reads, splint_dict, adapter_dict, adapter_set, iteration
             dangling_subreads.append(seq[peaks[0]:])
             qual_dangling_subreads.append(qual[peaks[0]:])
 
-        tmp_dir = args.out_path + adapter_dict[name][0] + '/tmp' + str(iteration) + '/'
-        if not os.path.isdir(tmp_dir):
-            os.mkdir(tmp_dir)
-        subread_file = tmp_dir + 'subreads.fastq'
+        tmp_adapter_dir = tmp_dir + read_adapter + '/tmp' + str(index) + '/'
+        if not os.path.isdir(tmp_adapter_dir):
+            os.mkdir(tmp_adapter_dir)
+        subread_file = tmp_adapter_dir + 'subreads.fastq'
 
-        consensus, repeats = determine_consensus(
-            args, read, subreads, qual_subreads, dangling_subreads, qual_dangling_subreads,
-            racon, tmp_dir, subread_file
-        )
-
+        consensus, repeats, subs = determine_consensus(
+                args, read, subreads, qual_subreads, dangling_subreads, qual_dangling_subreads,
+                racon, tmp_dir
+            )
         if consensus:
-            avg_qual = round(sum([ord(x)-33 for x in qual])/seq_len, 2)
+            avg_qual=10
             cons_len = len(consensus)
-            final_out = open(tmp_dir + '/R2C2_Consensus.fasta', 'a+')
-            print('>' + name + '_' + '_'.join([str(x) for x in [avg_qual, seq_len, repeats, cons_len]]), file=final_out)
-            print(consensus, file=final_out)
-            final_out.close()
+            read_consensus ='>'+name+'_'+str(avg_qual)+'_'+str(seq_len)+'_'+str(repeats)+'_'+str(cons_len)+'\n'+consensus+'\n'
+    print('finished read',number,'of', total, 'reads total', '~'+str(round((number/total)*100,2))+'%' ,' '*20, end='\r')
+    return read_consensus,read_adapter,subs
 
 def main(args):
     if not args.out_path.endswith('/'):
@@ -186,6 +182,7 @@ def main(args):
     else:
         racon = 'racon'
         blat = 'blat'
+
 
     tmp_dir = args.out_path + 'tmp/'
     if not os.path.isdir(tmp_dir):
@@ -206,9 +203,16 @@ def main(args):
         total_reads += 1
     adapter_dict, adapter_set, no_splint = preprocess(blat, args, tmp_dir, tmp_adapter_dict, total_reads)
 
+    outDict={}
+    outSubDict={}
     for adapter in adapter_set:
         if not os.path.exists(args.out_path + adapter):
             os.mkdir(args.out_path + adapter)
+        if not os.path.exists(args.out_path + '/tmp/' +adapter):
+            os.mkdir(args.out_path + '/tmp/' +adapter)
+        outDict[adapter]=open(args.out_path + adapter +'/R2C2_Consensus.fasta','w')
+        outSubDict[adapter]=open(args.out_path + adapter +'/R2C2_Subreads.fastq','w')
+
 
     all_reads = total_reads + short_reads
     print('C3POa version:', VERSION, file=log_file)
@@ -233,43 +237,51 @@ def main(args):
         splint_dict[splint[0]] = [splint[1]]
         splint_dict[splint[0]].append(mm.revcomp(splint[1]))
 
-    pool = mp.Pool(args.numThreads, maxtasksperchild=1)
-    pbar = tqdm(total=total_reads // args.groupSize + 1, desc='Calling consensi')
-    iteration, current_num, tmp_reads, target = 1, 0, [], args.groupSize
+    iteration, current_num, tmp_reads, target, reads_since_gc = 1, 0, [], min(args.groupSize,total_reads), 0
+    results={}
     for read in mm.fastx_read(args.reads, read_comment=False):
         if len(read[1]) < args.lencutoff:
             continue
         tmp_reads.append(read)
         current_num += 1
         if current_num == target:
-            pool.apply_async(analyze_reads,
-                args=(args, tmp_reads, splint_dict, adapter_dict, adapter_set, iteration, racon),
-                callback=lambda _: pbar.update(1)
-            )
+            pool = mp.Pool(args.numThreads)
+
+            for index in range(len(tmp_reads)):
+                tmp_read=tmp_reads[index]
+                name=tmp_read[0]
+                if name in adapter_dict:
+                    read_adapter_info=adapter_dict[name]
+                    strand = read_adapter_info[1]
+                    if strand == '-':
+                        # use reverse complement of the splint
+                        splint = splint_dict[read_adapter_info[0]][1]
+                    else:
+                        splint = splint_dict[read_adapter_info[0]][0]
+                    results[index]=pool.apply_async(analyze_reads,[args, tmp_read, splint, read_adapter_info[0], adapter_set, index, racon, tmp_dir,index+current_num-args.groupSize,total_reads])
+            pool.close()
+            pool.join()
+            gc.collect()
+            adapters_with_reads=set()
+            for index,result in results.items():
+                consensus,adapter,subs = result.get()
+                if consensus:
+                    outDict[adapter].write(consensus)
+                    for subname,subseq,subq in subs:
+                        outSubDict[adapter].write('@%s\n%s\n+\n%s\n' %(subname,subseq,subq))
+
+            results={}
             iteration += 1
             target = args.groupSize * iteration
             if target >= total_reads:
                 target = total_reads
             tmp_reads = []
-            gc.collect()
-    pool.close()
-    pool.join()
-    pbar.close()
+
 
     for adapter in adapter_set:
-        cat_files(
-            args.out_path + adapter,
-            '/tmp*/R2C2_Consensus.fasta',
-            args.out_path + adapter + '/R2C2_Consensus.fasta',
-            'Catting consensus reads', compress=args.compress_output
-        )
-        cat_files(
-            args.out_path + adapter,
-            '/tmp*/subreads.fastq',
-            args.out_path + adapter + '/R2C2_Subreads.fastq',
-            'Catting subreads', compress=args.compress_output
-        )
-        remove_files(args.out_path + adapter, '/tmp*')
+        outDict[adapter].close()
+        outSubDict[adapter].close()
+
 
 if __name__ == '__main__':
     args = parse_args()

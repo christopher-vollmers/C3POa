@@ -34,7 +34,7 @@ chmod +x setup.sh
 
 Alternatively, you can grab all of the pip installable packages:
 ```bash
-python3 -m pip install --user --upgrade scipy numpy pyabpoa=1.0.5 mappy Cython tqdm setuptools wheel
+python3 -m pip install --user --upgrade scipy numpy pyabpoa=1.4.0 mappy Cython tqdm setuptools wheel
 ```
 and then build conk and racon manually.
 
@@ -64,12 +64,7 @@ Command line tools have been replaced with their python APIs (except blat and ra
 python3 C3POa.py -r reads.fastq 
                  -o output/path 
                  -s splint.fasta 
-                 -c config 
-                 -q 9 
-                 -l 1000 
-                 -d 500
                  -n 32 
-                 -g 1000
 ```
 
 Arguments:
@@ -84,15 +79,13 @@ optional:
 
 -c  config file containing path to BLAT and racon binaries
 
--q  only reads above this average quality will be retained (9 is recommended)
-
 -l  only reads longer than this number will be retained (1000 recommended)
 
 -d  minimum distance between peaks/minimum insert size. For cDNA, we use 500 (default)
 
 -n  number of threads to use
 
--g  group size (number of reads given to each thread, default 1000)
+-g  group size (number of reads given to each thread, default 100000)
 
 -b  split input by number of threads for blat alignment instead of groupSize
 

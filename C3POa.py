@@ -85,26 +85,6 @@ def configReader(path, configIn):
                          + ' from your path, not the config file.\n')
     return progs
 
-def cat_files(path, pattern, output, description, compress):
-    '''Use glob to get around bash argument list limitations'''
-    if compress:
-        output += '.gz'
-        final_fh = gzip.open(output, 'wb+')
-    else:
-        final_fh = open(output, 'w+')
-    for f in tqdm(glob(path + pattern), desc=description):
-        with open(f) as fh:
-            for line in fh:
-                if compress:
-                    line = line.encode()
-                final_fh.write(line)
-    final_fh.close()
-
-def remove_files(path, pattern):
-    '''Use glob to get around bash argument list limitations'''
-    for d in tqdm(glob(path + pattern), desc='Removing files'):
-        shutil.rmtree(d)
-
 def rounding(x, base):
     '''Rounds to the nearest base, we use 50'''
     return int(base * round(float(x) / base))
@@ -210,9 +190,12 @@ def main(args):
             os.mkdir(args.out_path + adapter)
         if not os.path.exists(args.out_path + '/tmp/' +adapter):
             os.mkdir(args.out_path + '/tmp/' +adapter)
-        outDict[adapter]=open(args.out_path + adapter +'/R2C2_Consensus.fasta','w')
-        outSubDict[adapter]=open(args.out_path + adapter +'/R2C2_Subreads.fastq','w')
-
+        if args.compress_output:
+            outDict[adapter]=gzip.open(args.out_path + adapter +'/R2C2_Consensus.fasta.gz','wb+')
+            outSubDict[adapter]=gzip.open(args.out_path + adapter +'/R2C2_Subreads.fastq.gz','wb+')
+        else:
+            outDict[adapter]=open(args.out_path + adapter +'/R2C2_Consensus.fasta','w')
+            outSubDict[adapter]=open(args.out_path + adapter +'/R2C2_Subreads.fastq','w')
 
     all_reads = total_reads + short_reads
     print('C3POa version:', VERSION, file=log_file)
@@ -246,8 +229,8 @@ def main(args):
         current_num += 1
         if current_num == target:
             pool = mp.Pool(args.numThreads)
-
-            for index in range(len(tmp_reads)):
+            length_tmp_reads=len(tmp_reads)
+            for index in range(length_tmp_reads):
                 tmp_read=tmp_reads[index]
                 name=tmp_read[0]
                 if name in adapter_dict:
@@ -258,7 +241,8 @@ def main(args):
                         splint = splint_dict[read_adapter_info[0]][1]
                     else:
                         splint = splint_dict[read_adapter_info[0]][0]
-                    results[index]=pool.apply_async(analyze_reads,[args, tmp_read, splint, read_adapter_info[0], adapter_set, index, racon, tmp_dir,index+current_num-args.groupSize,total_reads])
+                    results[index]=pool.apply_async(analyze_reads,[args, tmp_read, splint, read_adapter_info[0], adapter_set, index, racon, tmp_dir,index+current_num-length_tmp_reads,total_reads])
+
             pool.close()
             pool.join()
             gc.collect()
@@ -266,9 +250,14 @@ def main(args):
             for index,result in results.items():
                 consensus,adapter,subs = result.get()
                 if consensus:
+                    if args.compress_output:
+                        consensus=consensus.encode()
                     outDict[adapter].write(consensus)
                     for subname,subseq,subq in subs:
-                        outSubDict[adapter].write('@%s\n%s\n+\n%s\n' %(subname,subseq,subq))
+                        entry='@%s\n%s\n+\n%s\n' %(subname,subseq,subq)
+                        if args.compress_output:
+                            entry=entry.encode()
+                        outSubDict[adapter].write(entry)
 
             results={}
             iteration += 1

@@ -11,8 +11,10 @@ import editdistance as ld
 from glob import glob
 import gzip
 import shutil
+import gc
 
-VERSION = 'v2.3.0'
+
+VERSION = 'v2.4.0'
 
 def parse_args():
     '''Parses arguments.'''
@@ -349,9 +351,8 @@ def readSamplesheet(readFolder,sampleSheet):
     indexDict={}
     lineCounter=0
     SplintOnly=False
-
-    out=open(readFolder+'/demultiplexed/Undetermined.fasta','w')
-    out.close()
+    outDict={}
+    outDict['Undetermined']=readFolder+'/demultiplexed/Undetermined.fasta'
     for line in open(sampleSheet):
         lineCounter+=1
         if lineCounter==1:
@@ -370,8 +371,7 @@ def readSamplesheet(readFolder,sampleSheet):
         else:
             a=line.strip().split('\t')
             libraryName=a[0]
-            out=open(readFolder+'/demultiplexed/'+libraryName+'.fasta','w')
-            out.close()
+            outDict[libraryName]=readFolder+'/demultiplexed/'+libraryName+'.fasta'
             countDict[libraryName]=0
             Splint=a[1]
             if Splint not in indexDict:
@@ -383,59 +383,64 @@ def readSamplesheet(readFolder,sampleSheet):
                 SplintOnly=True
                 indexDict[Splint]=libraryName
 
-    return indexDict, indexes, SplintOnly, countDict
+    for libraryName,filePath in outDict.items():
+        outTemp=open(filePath,'w')
+        outTemp.close()
+    return indexDict, indexes, SplintOnly, countDict,outDict
 
 # print(indexDict)
 counter=0
 
-def demultiplex(seq,seq_to_idx,minDist,maxDist):
-    matchSet=[]
-    for index,entries in seq_to_idx.items():
-        if index[0]=='E':
-            Actual = index[1]
-            Dir = Actual
-            boundaries = index[3:-1].split(':')
-            readseq1 = seq[int(boundaries[0]):int(boundaries[1])]
-            readseq2 = mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
-            left = match_index(readseq1,entries,minDist,maxDist)
-            if len(left) == 0:
-                right = match_index(readseq2,entries,minDist,maxDist)
-                if len(right) == 0:
-                    matchSet.append('Undetermined')
+def demultiplex(seq,seq_to_idx,minDist,maxDist,libraryName,number,total):
+    if not libraryName:
+        matchSet=[]
+        for index,entries in seq_to_idx.items():
+            if index[0]=='E':
+                Actual = index[1]
+                Dir = Actual
+                boundaries = index[3:-1].split(':')
+                readseq1 = seq[int(boundaries[0]):int(boundaries[1])]
+                readseq2 = mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
+                left = match_index(readseq1,entries,minDist,maxDist)
+                if len(left) == 0:
+                    right = match_index(readseq2,entries,minDist,maxDist)
+                    if len(right) == 0:
+                        matchSet.append('Undetermined')
+                    else:
+                        matchSet.append(right)
+                        Dir='3'
                 else:
-                    matchSet.append(right)
-                    Dir='3'
+                    matchSet.append(left)
+                    Dir='5'
+                if Actual!=Dir:
+                    seq=mm.revcomp(seq)
+            elif index[0]=='5':
+                boundaries=index[2:-1].split(':')
+                readseq=seq[int(boundaries[0]):int(boundaries[1])]
+                matchSet.append(match_index(readseq,entries,minDist,maxDist))
+
+            elif index[0]=='3':
+                boundaries=index[2:-1].split(':')
+                readseq=mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
+                matchSet.append(match_index(readseq,entries,minDist,maxDist))
+
+
+        if 'Undetermined' in matchSet:
+            libraryName = 'Undetermined'
+        elif len(matchSet)==1:
+            if len(matchSet[0])==1:
+                libraryName = matchSet[0][0]
             else:
-                matchSet.append(left)
-                Dir='5'
-            if Actual!=Dir:
-                seq=mm.revcomp(seq)
-        elif index[0]=='5':
-            boundaries=index[2:-1].split(':')
-            readseq=seq[int(boundaries[0]):int(boundaries[1])]
-            matchSet.append(match_index(readseq,entries,minDist,maxDist))
-
-        elif index[0]=='3':
-            boundaries=index[2:-1].split(':')
-            readseq=mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
-            matchSet.append(match_index(readseq,entries,minDist,maxDist))
-
-
-    if 'Undetermined' in matchSet:
-        libraryName = 'Undetermined'
-    elif len(matchSet)==1:
-        if len(matchSet[0])==1:
-            libraryName = matchSet[0][0]
+                libraryName = 'Undetermined'
         else:
-            libraryName = 'Undetermined'
-    else:
-        root=set(matchSet[0])
-        for matches in matchSet[1:]:
-            root=root & set(matches)
-        if len(root)==1:
-            libraryName = list(root)[0]
-        else:
-            libraryName = 'Undetermined'
+            root=set(matchSet[0])
+            for matches in matchSet[1:]:
+                root=root & set(matches)
+            if len(root)==1:
+                libraryName = list(root)[0]
+            else:
+                libraryName = 'Undetermined'
+    print('finished read',number,'of', total, 'reads total', '~'+str(round((number/total)*100,2))+'%' ,' '*20, end='\r')
     return libraryName,seq
 
 
@@ -464,7 +469,7 @@ def main(args):
     if args.samplesheet:
         print('\nSample sheet provided. Starting to demultiplex')
         print('Reading sample sheet')
-        indexDict, indexes, SplintOnly, countDict = readSamplesheet(input_folder,args.samplesheet)
+        indexDict, indexes, SplintOnly, countDict,outDict = readSamplesheet(input_folder,args.samplesheet)
         for folder in os.listdir(input_folder):
             counter=0
             subfolder=input_folder+'/'+folder
@@ -484,38 +489,60 @@ def main(args):
                     print('working on '+readFile)
                     if args.compress_output:
                         readFile+='.gz'
-                    readDict={}
+
+                    print('determining number of reads')
+                    total_reads=0
+                    for read in mm.fastx_read(readFile, read_comment=False):
+                        total_reads+=1
+                    print(total_reads, 'reads to demultiplex')
+
+                    demuxGroupsize=100000
+                    target=min(demuxGroupsize,total_reads)
+                    current_num=0
                     threads=args.threads
-                    for name,seq,q in mm.fastx_read(readFile):
-                        countDict['All']+=1
-                        counter+=1
-                        if counter%threads not in readDict:
-                            readDict[counter%threads]=[]
-
-                        readDict[counter%threads].append((name,seq))
-
-                    pool = mp.Pool(processes=threads)
-                    print('Processing reads in batches')
                     results={}
-                    for batch in readDict:
-                        results[batch]=pool.apply_async(batchProcess, args=(readDict[batch],seq_to_idx,minDist,maxDist,SplintOnly,batch))
-                    pool.close()
-                    pool.join()
+                    tmp_reads=[]
+                    iteration=1
+                    for read in mm.fastx_read(readFile, read_comment=False):
+                        tmp_reads.append(read)
+                        current_num += 1
+                        if current_num == target:
+                            pool = mp.Pool(args.threads)
+                            length_tmp_reads=len(tmp_reads)
+                            for index in range(length_tmp_reads):
+                                tmp_read=tmp_reads[index]
+                                name,seq = tmp_read[0],tmp_read[1]
+                                libraryName=''
+                                if len(seq)<30:
+                                    libraryName = 'Undetermined'
+                                elif SplintOnly:
+                                    libraryName = indexDict[folder]
+                                results[name]=pool.apply_async(demultiplex,[seq,seq_to_idx,minDist,maxDist,libraryName,index+current_num-length_tmp_reads,total_reads])
+                            pool.close()
+                            pool.join()
+                            gc.collect()
+                            for name in results:
+                                libraryName,seq=results[name].get()
+                                fh=open(outDict[libraryName],'a')
+                                fh.write('>%s\n%s\n' %(name,seq))
+                                fh.close()
+                            results={}
+                            iteration += 1
+                            target = demuxGroupsize * iteration
+                            if target >= total_reads:
+                                target = total_reads
+                            tmp_reads = []
 
-                    print('\n'*threads)
-                    print('Writing demultiplexed files')
-                    for batch, result in results.items():
-                        for name,seq,libraryName in result.get():
-                            out=open(input_folder+'/demultiplexed/'+libraryName+'.fasta','a')
-                            out.write('>%s\n%s\n' %(name,seq))
-                            out.close()
-                            countDict[libraryName]+=1
+
+        for libraryName in outDict:
+            outDict[libraryName].close()
+
         print('Finished demultiplexing')
 
 
 def batchProcess(reads,seq_to_idx,minDist,maxDist,SplintOnly,batch):
     resultList=[]
-    for name,seq in tqdm(reads,position=batch):
+    for name,seq in tqdm(reads,position=batch,ncols=100):
           if len(seq)<30:
                libraryName = 'Undetermined'
           elif SplintOnly:

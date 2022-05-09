@@ -534,8 +534,6 @@ def main(args):
                             tmp_reads = []
 
 
-        for libraryName in outDict:
-            outDict[libraryName].close()
 
         print('Finished demultiplexing')
 

@@ -14,6 +14,7 @@ dependencies:
     - racon
     - blat
     - mappy
+    - editdistance
     - pip
     - pip:
-        - pyabpoa=1.0.5
+        - pyabpoa==1.4.0

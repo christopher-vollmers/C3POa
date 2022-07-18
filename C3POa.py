@@ -56,6 +56,10 @@ def parse_args():
                         help='''Use to chunk blat across the number of threads instead of by groupSize (faster).''')
     parser.add_argument('--compress_output', '-co', action='store_true', default=False,
                         help='Use to compress (gzip) both the consensus fasta and subread fastq output files.')
+    parser.add_argument('--peakFinderSettings', '-p', action='store', default='20,3,41,2',
+                        help='Only set this if you have a really short splint (<50nt) and all your reads are discarded. Defaults to "20,3,41,2". Try "30,3,15,2" for a short splint. No promises though. We only tested C3POa for splints >100nt')
+
+
 
     parser.add_argument('--version', '-v', action='version', version=VERSION, help='Prints the C3POa version.')
 
@@ -90,7 +94,8 @@ def rounding(x, base):
     return int(base * round(float(x) / base))
 def analyze_reads(args, read, splint, read_adapter, adapter_set, index, racon, tmp_dir,number,total):
 
-    penalty, iters, window, order = 20, 3, 41, 2
+    peakFinderSettings=args.peakFinderSettings.split(',')
+    penalty, iters, window, order = int(peakFinderSettings[0]),int(peakFinderSettings[1]),int(peakFinderSettings[2]),int(peakFinderSettings[3])
 #        penalty, iters, window, order = 30, 3, 15, 2 #shorter splint
     name, seq, qual = read[0], read[1], read[2]
     seq_len = len(seq)

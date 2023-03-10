@@ -34,7 +34,7 @@ chmod +x setup.sh
 
 Alternatively, you can grab all of the pip installable packages:
 ```bash
-python3 -m pip install --user --upgrade scipy numpy pyabpoa=1.4.0 mappy Cython tqdm setuptools wheel
+python3 -m pip install --user --upgrade scipy numpy pyabpoa==1.4.0 mappy Cython tqdm setuptools wheel
 ```
 and then build conk and racon manually.
 

@@ -9,14 +9,14 @@ import multiprocessing as mp
 import shutil
 from glob import glob
 
-def preprocess(blat, args, tmp_dir, tmp_adapter_dict, num_reads):
+def preprocess(blat, args, tmp_dir, tmp_adapter_dict, num_reads,file_list):
     tmp_fasta = tmp_dir + 'R2C2_temp_for_BLAT.fasta'
     align_psl = tmp_dir + 'splint_to_read_alignments.psl'
 
     # skip the alignment if the psl file already exists
     if not os.path.exists(align_psl) or os.stat(align_psl).st_size == 0:
         print('Aligning splints to reads with blat', file=sys.stderr)
-        chunk_process(num_reads, args, blat)
+        chunk_process(num_reads, args, blat,file_list)
     else:
         print('Reading existing psl file', file=sys.stderr)
 
@@ -76,7 +76,7 @@ def process(args, reads, blat, iteration):
               .format(blat=blat, splint=args.splint_file, reads=tmp_fa, psl=align_psl, blat_msgs=b_msgs))
     os.remove(tmp_fa)
 
-def chunk_process(num_reads, args, blat):
+def chunk_process(num_reads, args, blat, file_list):
     '''Split the input fasta into chunks and process'''
     if args.blatThreads:
         chunk_size = (num_reads // args.numThreads) + 1
@@ -88,18 +88,19 @@ def chunk_process(num_reads, args, blat):
     pool = mp.Pool(args.numThreads)
     pbar = tqdm(total=num_reads // chunk_size + 1, desc='Preprocessing')
     iteration, current_num, tmp_reads, target = 1, 0, {}, chunk_size
-    for read in mm.fastx_read(args.reads, read_comment=False):
-        if len(read[1]) < args.lencutoff:
-            continue
-        tmp_reads[read[0]] = read[1]
-        current_num += 1
-        if current_num == target:
-            pool.apply_async(process, args=(args, tmp_reads, blat, iteration), callback=lambda _: pbar.update(1))
-            iteration += 1
-            target = chunk_size * iteration
-            if target >= num_reads:
-                target = num_reads
-            tmp_reads = {}
+    for reads in file_list:
+        for read in mm.fastx_read(reads, read_comment=False):
+            if len(read[1]) < args.lencutoff:
+                continue
+            tmp_reads[read[0]] = read[1]
+            current_num += 1
+            if current_num == target:
+                pool.apply_async(process, args=(args, tmp_reads, blat, iteration), callback=lambda _: pbar.update(1))
+                iteration += 1
+                target = chunk_size * iteration
+                if target >= num_reads:
+                    target = num_reads
+                tmp_reads = {}
     pool.close()
     pool.join()
     pbar.close()

@@ -77,31 +77,30 @@ python3 C3POa.py -r reads.fastq
 
 Arguments:
 ```
--r  raw reads in fastq format
+  --reads -r
+                        FASTQ file that contains the long R2C2 reads or a folder containing multiple of these FASTQ files.
+  --splint_file  -s
+                        Path to the splint FASTA file.
+  --out_path -o 
+                        Directory where all the files will end up. Defaults to your current directory.
+optional
 
--o  output path
-
--s  sequence of DNA splint used in R2C2 protocol in fasta format
-
-optional: 
-
--c  config file containing path to BLAT and racon binaries
-
--l  only reads longer than this number will be retained (1000 recommended)
-
--d  minimum distance between peaks/minimum insert size. For cDNA, we use 500 (default)
-
--n  number of threads to use
-
--g  group size (number of reads given to each thread, default 100000)
-
--b  split input by number of threads for blat alignment instead of groupSize
-
--z  use to exclude zero repeat reads
-
--co compress the output fasta/q files (gzip)
-
--v  print the C3POa version and exit
+  --config
+                        If you want to use a config file to specify paths to programs, specify them here. Use for racon and blat if they are not in your
+                        path.
+  --lencutoff -l
+                        Sets the length cutoff for your raw sequences. Anything shorter than the cutoff will be excluded. Defaults to 1000.
+  --mdistcutoff -d
+                        Sets the median distance cutoff for consensus sequences. Anything shorter will be excluded. Defaults to 500.
+  --zero, -z            Use to exclude zero repeat reads. Defaults to True (includes zero repeats).
+  --numThreads -n
+                        Number of threads to use during multiprocessing. Defaults to 1.
+  --groupSize -g
+                        Number of reads processed by each thread in each iteration. Defaults to 100000.
+  --blatThreads, -b     Use to chunk blat across the number of threads instead of by groupSize (faster).
+  --compress_output, -co
+                        Use to compress (gzip) both the consensus fasta and subread fastq output files.
+  --version, -v         Prints the C3POa version.
 ```
 
 Example output read (readName_averageQuality_originalReadLength_numberOfRepeats_subreadLength):

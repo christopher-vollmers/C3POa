@@ -30,7 +30,7 @@ def parse_args():
                                      add_help=True,
                                      prefix_chars='-')
     parser.add_argument('--reads', '-r', type=str, action='store',
-                          help='FASTQ file that contains the long R2C2 reads.')
+                          help='FASTQ file that contains the long R2C2 reads or a folder containing multiple of these FASTQ files.')
     parser.add_argument('--splint_file', '-s', type=str, action='store',
                           help='Path to the splint FASTA file.')
     parser.add_argument('--out_path', '-o', type=str, action='store', default=os.getcwd(),
@@ -142,11 +142,14 @@ def analyze_reads(args, read, splint, read_adapter, adapter_set, index, racon, t
                 racon, tmp_dir
             )
         if consensus:
-            avg_qual=10
+            numbers=[]
+            for Q in qual:
+                numbers.append(ord(Q)-33)
+            avg_qual=str(round(np.average(numbers),1))
             cons_len = len(consensus)
             read_consensus ='>'+name+'_'+str(avg_qual)+'_'+str(seq_len)+'_'+str(repeats)+'_'+str(cons_len)+'\n'+consensus+'\n'
     print('finished read',number,'of', total, 'reads total', '~'+str(round((number/total)*100,2))+'%' ,' '*20, end='\r')
-    return read_consensus,read_adapter,subs
+    return read_consensus,read_adapter,subs,peaks
 
 def main(args):
     if not args.out_path.endswith('/'):
@@ -169,19 +172,38 @@ def main(args):
         os.mkdir(tmp_dir)
 
     # read in the file and preprocess
-    read_list, total_reads = [], 0
+    read_list, total_reads, file_list = [], 0, []
     short_reads = 0
     tmp_fasta = tmp_dir + 'R2C2_temp_for_BLAT.fasta'
     align_psl = tmp_dir + 'splint_to_read_alignments.psl'
 
+    input_path=args.reads
+    if os.path.isdir(input_path):
+         print('Read input is a folder')
+         for file in os.listdir(input_path):
+             if 'fastq' in file:
+                 file_list.append(input_path+'/'+file)
+    elif os.path.isfile(input_path):
+        print('Read input is a file')
+        file_list.append(input_path)
+    else:
+        print('no file provided')
+
+    print(len(file_list), 'file(s) provided')
+
+
     tmp_adapter_dict = {}
-    for read in mm.fastx_read(args.reads, read_comment=False):
-        if len(read[1]) < args.lencutoff:
-            short_reads += 1
-            continue
-        tmp_adapter_dict[read[0]] = [[None, 1, None]] # [adapter, matches, strand]
-        total_reads += 1
-    adapter_dict, adapter_set, no_splint = preprocess(blat, args, tmp_dir, tmp_adapter_dict, total_reads)
+    for reads in file_list:
+        for read in mm.fastx_read(reads, read_comment=False):
+            if len(read[1]) < args.lencutoff:
+                short_reads += 1
+                continue
+            tmp_adapter_dict[read[0]] = [[None, 1, None]] # [adapter, matches, strand]
+            total_reads += 1
+
+    print(total_reads+short_reads, 'total reads to be processed')
+
+    adapter_dict, adapter_set, no_splint = preprocess(blat, args, tmp_dir, tmp_adapter_dict, total_reads, file_list)
 
     outDict={}
     outSubDict={}
@@ -222,55 +244,58 @@ def main(args):
 
     iteration, current_num, tmp_reads, target, reads_since_gc = 1, 0, [], min(args.groupSize,total_reads), 0
     results={}
-    for read in mm.fastx_read(args.reads, read_comment=False):
-        if len(read[1]) < args.lencutoff:
-            continue
-        tmp_reads.append(read)
-        current_num += 1
-        if current_num == target:
-            pool = mp.Pool(args.numThreads)
-            length_tmp_reads=len(tmp_reads)
-            for index in range(length_tmp_reads):
-                tmp_read=tmp_reads[index]
-                name=tmp_read[0]
-                if name in adapter_dict:
-                    read_adapter_info=adapter_dict[name]
-                    strand = read_adapter_info[1]
-                    if strand == '-':
+
+
+    for reads in file_list:
+        for read in mm.fastx_read(reads, read_comment=False):
+            if len(read[1]) < args.lencutoff:
+                continue
+            tmp_reads.append(read)
+            current_num += 1
+            if current_num == target:
+                pool = mp.Pool(args.numThreads)
+                length_tmp_reads=len(tmp_reads)
+                for index in range(length_tmp_reads):
+                    tmp_read=tmp_reads[index]
+                    name=tmp_read[0]
+                    if name in adapter_dict:
+                        read_adapter_info=adapter_dict[name]
+                        strand = read_adapter_info[1]
+                        if strand == '-':
                         # use reverse complement of the splint
-                        splint = splint_dict[read_adapter_info[0]][1]
-                    else:
-                        splint = splint_dict[read_adapter_info[0]][0]
-                    results[index]=pool.apply_async(analyze_reads,[args, tmp_read, splint, read_adapter_info[0], adapter_set, index, racon, tmp_dir,index+current_num-length_tmp_reads,total_reads])
+                            splint = splint_dict[read_adapter_info[0]][1]
+                        else:
+                            splint = splint_dict[read_adapter_info[0]][0]
+                        results[index]=pool.apply_async(analyze_reads,[args, tmp_read, splint, read_adapter_info[0], adapter_set, index, racon, tmp_dir,index+current_num-length_tmp_reads,total_reads])
 
-            pool.close()
-            pool.join()
-            gc.collect()
-            adapters_with_reads=set()
-            for index,result in results.items():
-                consensus,adapter,subs = result.get()
-                if consensus:
-                    if args.compress_output:
-                        consensus=consensus.encode()
-                    outDict[adapter].write(consensus)
-                    for subname,subseq,subq in subs:
-                        entry='@%s\n%s\n+\n%s\n' %(subname,subseq,subq)
+                pool.close()
+                pool.join()
+                gc.collect()
+                adapters_with_reads=set()
+                for index,result in results.items():
+                    consensus,adapter,subs,peaks = result.get()
+                    if consensus:
                         if args.compress_output:
-                            entry=entry.encode()
-                        outSubDict[adapter].write(entry)
+                            consensus=consensus.encode()
+                        outDict[adapter].write(consensus)
+                        for subname,subseq,subq in subs:
+                            entry='@%s\n%s\n+\n%s\n' %(subname+'D',subseq,subq)  ### To indicate Dorado subreads
+                            if args.compress_output:
+                                entry=entry.encode()
+                            outSubDict[adapter].write(entry)
 
-            results={}
-            iteration += 1
-            target = args.groupSize * iteration
-            if target >= total_reads:
-                target = total_reads
-            tmp_reads = []
+                results={}
+                iteration += 1
+                target = args.groupSize * iteration
+                if target >= total_reads:
+                    target = total_reads
+                tmp_reads = []
 
 
     for adapter in adapter_set:
         outDict[adapter].close()
         outSubDict[adapter].close()
-
+    print('')
 
 if __name__ == '__main__':
     args = parse_args()
@@ -279,3 +304,4 @@ if __name__ == '__main__':
         sys.exit(1)
     mp.set_start_method("spawn")
     main(args)
+

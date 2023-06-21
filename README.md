@@ -13,9 +13,7 @@ This version of C3POa changes a lot. The old gonk branch can be found [here](htt
 - [Python 3](https://www.python.org/downloads/)
 - [NumPy](https://pypi.org/project/numpy/)
 - [SciPy](https://pypi.org/project/scipy/)
-- [pyabpoa](https://pypi.org/project/pyabpoa/)
 - [mappy](https://pypi.org/project/mappy/)
-- [tqdm](https://pypi.org/project/tqdm/)
 - [Cython](https://pypi.org/project/Cython/)
 - [conk](https://github.com/rvolden/conk)
 - [racon](https://github.com/isovic/racon)
@@ -23,21 +21,17 @@ This version of C3POa changes a lot. The old gonk branch can be found [here](htt
 - [blat source](https://users.soe.ucsc.edu/~kent/src/blatSrc35.zip) or [blat executable](http://hgdownload.soe.ucsc.edu/admin/exe/)
 
 To fetch and build dependencies, use setup.sh.
+
 setup.sh will download and make the packages that you need to run C3POa (except for blat).
 
-The setup script **does not** install programs so you still need to put blat, and racon into your PATH.
+The setup script will install racon and conk. It will also download a "most linux"  blat executable into your C3POa directory.
 
 ```bash
 chmod +x setup.sh
 ./setup.sh
 ```
 
-Alternatively, you can grab all of the pip installable packages:
-```bash
-python3 -m pip install --user --upgrade scipy numpy pyabpoa==1.4.0 mappy Cython tqdm setuptools wheel
-```
-and then build conk and racon manually.
-
+If any of this doesn't work, you can download and install racon, conk, and blat manually and change where C3POa looks for them at the top of the C3POa.py and C3POa_postprocessing.py scripts.
 Blat can built from [source](https://users.soe.ucsc.edu/~kent/src/blatSrc35.zip) or you can get an [executable](http://hgdownload.soe.ucsc.edu/admin/exe/).
 Please follow the documentation in the blat readme for make instructions.
 
@@ -48,27 +42,30 @@ Please follow the documentation in the blat readme for make instructions.
 After resolving all of the dependencies, you can run C3POa with python.
 
 ```bash
-python3 C3POa.py -r reads.fastq -o path/to/where/C3POa/outputs/data/ -s splint.fasta -n 32
+python3 C3POa.py -r path/to/reads.fastq -o path/to/where/C3POa/outputs/data/ -s splint.fasta -n 32
 python3 C3POa_postprocessing.py -i path/to/where/C3POa/outputs/data/ -a adapter.fasta -x sampleSheet
 ```
-
 Note that C3POa_postprocessing.py takes the output folder of C3POa.py as input
 
 ## C3POa.py
 
-Preprocessing is now built in.
-Preprocessing takes raw 1D nanopore R2C2 reads in fastq (can be zipped) format, removes low quality and short reads and then finds splint sequences in those reads using BLAT.
-Preprocessing will also demultiplex reads based on splints that are put into the splint fasta file.
-The preprocessor will also look for the alignment psl file in case it was done before.
-C3POa won't do the alignment if it finds `output_dir/tmp/splint_to_read_alignments.psl`.
-By default, the input file will be chunked into fasta files of `len = group size`.
-Use the `-b` option to have chunks be `len = number of reads / number of threads`.
+C3POa can be run on a nanopore 1D.fastq file or a directory containing multiple fastq files.
 
-The main algorithmic difference is we only align the splint to the read.
-Command line tools have been replaced with their python APIs (except blat and racon).
+C3POa now has a --resume option that will look for a c3poa.log file in your output direcotry. 
+It will look into the c3poa.log file in the output directory to determine if it was run previously on same of the fastqs in the input directory and then skip those.
+
+If called on a directory, C3POa will now check the directory for new files coming in.
+In essence, C3POa now does live consensus calling. 
+
+You can start it at the same time as nanopore basecalling and just point it at the pass/ directory.
+It will exit if no new fastq was created in the input directory for 30 minutes. 
+
+Instead of pyabpoa, v3 of C3POa now uses the abpoa directly.
+This allows us to use minimizer based msa for extra long inserts which reduces RAM requirements and prevents rare stalling events. 
+
 
 ```bash
-python3 C3POa.py -r reads.fastq 
+python3 C3POa.py -r input/path 
                  -o output/path 
                  -s splint.fasta 
                  -n 32 
@@ -78,29 +75,31 @@ python3 C3POa.py -r reads.fastq
 Arguments:
 ```
   --reads -r
-                        FASTQ file that contains the long R2C2 reads or a folder containing multiple of these FASTQ files.
+                        FASTQ file that contains the long R2C2 reads or a directory containing multiple of these FASTQ files.
   --splint_file  -s
                         Path to the splint FASTA file.
   --out_path -o 
                         Directory where all the files will end up. Defaults to your current directory.
 optional
 
-  --config
-                        If you want to use a config file to specify paths to programs, specify them here. Use for racon and blat if they are not in your
-                        path.
   --lencutoff -l
                         Sets the length cutoff for your raw sequences. Anything shorter than the cutoff will be excluded. Defaults to 1000.
   --mdistcutoff -d
                         Sets the median distance cutoff for consensus sequences. Anything shorter will be excluded. Defaults to 500.
   --zero, -z            Use to exclude zero repeat reads. Defaults to True (includes zero repeats).
   --numThreads -n
-                        Number of threads to use during multiprocessing. Defaults to 1.
+                        Number of threads to use during multiprocessing. Defaults to 8.
   --groupSize -g
                         Number of reads processed by each thread in each iteration. Defaults to 100000.
   --blatThreads, -b     Use to chunk blat across the number of threads instead of by groupSize (faster).
   --compress_output, -co
                         Use to compress (gzip) both the consensus fasta and subread fastq output files.
+
+  --resume, -u          If set, C3POa will look for c3poa.log file in output directory. If c3poa.log exists, files marked as processed in the file will be skipped.
+                        Output will be appended to existing output files.
   --version, -v         Prints the C3POa version.
+
+
 ```
 
 Example output read (readName_averageQuality_originalReadLength_numberOfRepeats_subreadLength):
@@ -152,6 +151,7 @@ optional:
 -M  editdistance between read and best matching index in sample sheet has to be smaller than this number to return a match, default 2
     
 -m  editdistance difference between read and best matching index and read and second best matching index has to be bigger than this number to return a match, default 1
+    if editdistance between read and best matching index is 0, this cutoff does not apply. 
 
 -bt split input by number of threads instead of groupSize
 

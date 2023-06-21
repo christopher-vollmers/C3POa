@@ -8,21 +8,23 @@ import argparse
 import multiprocessing as mp
 import mappy as mm
 from conk import conk
-from tqdm import tqdm
 import gc
 import gzip
-import shutil
 import time
-from glob import glob
 
 PATH = '/'.join(os.path.realpath(__file__).split('/')[:-1]) + '/bin/'
 sys.path.append(os.path.abspath(PATH))
+
+C3POaPath = '/'.join(os.path.realpath(__file__).split('/')[:-1]) + '/'
+abpoa=C3POaPath+'/abPOA-v1.4.1/bin/abpoa'
+racon=C3POaPath+'/racon/build/bin/racon'
+blat=C3POaPath+'/blat/blat'
 
 from preprocess import preprocess
 from call_peaks import call_peaks
 from determine_consensus import determine_consensus
 
-VERSION = 'v2.4.0'
+VERSION = "v3 - It's over Anakin. I have the consensus!"
 
 def parse_args():
     '''Parses arguments.'''
@@ -36,10 +38,6 @@ def parse_args():
     parser.add_argument('--out_path', '-o', type=str, action='store', default=os.getcwd(),
                         help='''Directory where all the files will end up.
                                 Defaults to your current directory.''')
-    parser.add_argument('--config', '-c', type=str, action='store', default='',
-                        help='''If you want to use a config file to specify paths to
-                                programs, specify them here. Use for racon and blat
-                                if they are not in your path.''')
     parser.add_argument('--lencutoff', '-l', type=int, action='store', default=1000,
                         help='''Sets the length cutoff for your raw sequences. Anything
                                 shorter than the cutoff will be excluded. Defaults to 1000.''')
@@ -57,6 +55,10 @@ def parse_args():
     parser.add_argument('--compress_output', '-co', action='store_true', default=False,
                         help='Use to compress (gzip) both the consensus fasta and subread fastq output files.')
 
+    parser.add_argument('--resume', '-u', action='store_true', default=False,
+                        help='''If set, C3POa will look for c3poa.log file in output directory. 
+                                If c3poa.log exists, files marked as processed in the file will be skipped. 
+                                Output will be appended to existing output files.''')
     parser.add_argument('--version', '-v', action='version', version=VERSION, help='Prints the C3POa version.')
 
     if len(sys.argv) == 1:
@@ -64,31 +66,26 @@ def parse_args():
         sys.exit(0)
     return parser.parse_args()
 
-def configReader(path, configIn):
-    progs = {}
-    with open(configIn) as f:
-        for line in f:
-            if line.startswith('#') or not line.rstrip().split():
-                continue
-            line = line.rstrip().split('\t')
-            progs[line[0]] = line[1]
-    possible = set(['racon', 'blat'])
-    inConfig = set()
-    for key in progs.keys():
-        inConfig.add(key)
-    # check for missing programs
-    # if missing, default to path
-    for missing in possible - inConfig:
-        path = missing
-        progs[missing] = path
-        sys.stderr.write('Using ' + str(missing)
-                         + ' from your path, not the config file.\n')
-    return progs
+def getFileList(query_path,done):
+    file_list=[]
+    '''Takes a path and returns a list of fast5 files excluding the most recent fast5.'''
+    for file in os.listdir(query_path):
+        if 'fastq' in file:
+            if os.path.abspath(query_path+file) not in done:
+                file_list.append(os.path.abspath(query_path+file))
+    if file_list:
+        exclude = max(file_list, key=os.path.getctime)
+        if time.time()-os.path.getctime(exclude)<600:
+            file_list.remove(exclude)
+        file_list.sort(key=lambda x:os.path.getctime(x))
+    return file_list
+
+
 
 def rounding(x, base):
     '''Rounds to the nearest base, we use 50'''
     return int(base * round(float(x) / base))
-def analyze_reads(args, read, splint, read_adapter, adapter_set, index, racon, tmp_dir,number,total):
+def analyze_reads(args, read, splint, read_adapter, adapter_set, index, racon, tmp_dir,number,total,abpoa):
 
     penalty, iters, window, order = 20, 3, 41, 2
 #        penalty, iters, window, order = 30, 3, 15, 2 #shorter splint
@@ -139,7 +136,7 @@ def analyze_reads(args, read, splint, read_adapter, adapter_set, index, racon, t
 
         consensus, repeats, subs = determine_consensus(
                 args, read, subreads, qual_subreads, dangling_subreads, qual_dangling_subreads,
-                racon, tmp_dir
+                racon, tmp_dir,abpoa
             )
         if consensus:
             numbers=[]
@@ -148,154 +145,200 @@ def analyze_reads(args, read, splint, read_adapter, adapter_set, index, racon, t
             avg_qual=str(round(np.average(numbers),1))
             cons_len = len(consensus)
             read_consensus ='>'+name+'_'+str(avg_qual)+'_'+str(seq_len)+'_'+str(repeats)+'_'+str(cons_len)+'\n'+consensus+'\n'
-    print('finished read',number,'of', total, 'reads total', '~'+str(round((number/total)*100,2))+'%' ,' '*20, end='\r')
+    print('\tFinished generating consensus for read',number,'of', total, 'reads total', '~'+str(round((number/total)*100,2))+'%' ,' '*20, end='\r')
     return read_consensus,read_adapter,subs,peaks
 
 def main(args):
+    print(f'C3POa {VERSION} - Generating consensus sequences from R2C2 read data')
+
+
     if not args.out_path.endswith('/'):
         args.out_path += '/'
     if not os.path.exists(args.out_path):
         os.mkdir(args.out_path)
-    log_file = open(args.out_path + 'c3poa.log', 'w+')
-
-    if args.config:
-        progs = configReader(args.out_path, args.config)
-        racon = progs['racon']
-        blat = progs['blat']
-    else:
-        racon = 'racon'
-        blat = 'blat'
 
 
-    tmp_dir = args.out_path + 'tmp/'
-    if not os.path.isdir(tmp_dir):
-        os.mkdir(tmp_dir)
+    resume=args.resume
+    done=set()
+    if resume:
+        print(f'--resume option is True: Looking for existing log file in {args.out_path}')
+        if os.path.isfile(args.out_path + 'c3poa.log'):
+            print('log file found')
+            for line in open(args.out_path + 'c3poa.log'):
+                if line.startswith('processed '):
+                    for processed in line.strip().split('processed '):
+                        done.add(os.path.abspath(processed))
+        print(f'{len(done)} processed files found in log file. They will be skipped')
 
-    # read in the file and preprocess
-    read_list, total_reads, file_list = [], 0, []
-    short_reads = 0
-    tmp_fasta = tmp_dir + 'R2C2_temp_for_BLAT.fasta'
-    align_psl = tmp_dir + 'splint_to_read_alignments.psl'
+    log_file = open(args.out_path + 'c3poa.log', 'a+')
 
-    input_path=args.reads
-    if os.path.isdir(input_path):
-         print('Read input is a folder')
-         for file in os.listdir(input_path):
-             if 'fastq' in file:
-                 file_list.append(input_path+'/'+file)
-    elif os.path.isfile(input_path):
-        print('Read input is a file')
-        file_list.append(input_path)
-    else:
-        print('no file provided')
-
-    print(len(file_list), 'file(s) provided')
-
-
-    tmp_adapter_dict = {}
-    for reads in file_list:
-        for read in mm.fastx_read(reads, read_comment=False):
-            if len(read[1]) < args.lencutoff:
-                short_reads += 1
-                continue
-            tmp_adapter_dict[read[0]] = [[None, 1, None]] # [adapter, matches, strand]
-            total_reads += 1
-
-    print(total_reads+short_reads, 'total reads to be processed')
-
-    adapter_dict, adapter_set, no_splint = preprocess(blat, args, tmp_dir, tmp_adapter_dict, total_reads, file_list)
-
-    outDict={}
-    outSubDict={}
-    for adapter in adapter_set:
-        if not os.path.exists(args.out_path + adapter):
-            os.mkdir(args.out_path + adapter)
-        if not os.path.exists(args.out_path + '/tmp/' +adapter):
-            os.mkdir(args.out_path + '/tmp/' +adapter)
-        if args.compress_output:
-            outDict[adapter]=gzip.open(args.out_path + adapter +'/R2C2_Consensus.fasta.gz','wb+')
-            outSubDict[adapter]=gzip.open(args.out_path + adapter +'/R2C2_Subreads.fastq.gz','wb+')
+    iterate=True
+    timeAtLastFile=time.time()
+    timeSinceLastFile=0
+    first=True
+    while iterate:
+        tmp_dir = args.out_path + 'tmp/'
+        if not os.path.isdir(tmp_dir):
+            os.mkdir(tmp_dir)
         else:
-            outDict[adapter]=open(args.out_path + adapter +'/R2C2_Consensus.fasta','w')
-            outSubDict[adapter]=open(args.out_path + adapter +'/R2C2_Subreads.fastq','w')
+            os.system(f'rm -r {tmp_dir}')
+            os.mkdir(tmp_dir)
 
-    all_reads = total_reads + short_reads
-    print('C3POa version:', VERSION, file=log_file)
-    print('Total reads:', all_reads, file=log_file)
-    print('No splint reads:',
-           no_splint,
-           '({:.2f}%)'.format((no_splint/all_reads)*100),
-           file=log_file)
-    print('Under len cutoff:',
-           short_reads,
-           '({:.2f}%)'.format((short_reads/all_reads)*100),
-           file=log_file)
-    print('Total thrown away reads:',
-           short_reads + no_splint,
-           '({:.2f}%)'.format(((short_reads + no_splint)/all_reads)*100),
-           file=log_file)
-    print('Reads after preprocessing:', all_reads - (short_reads + no_splint), file=log_file)
-    log_file.close()
+        print('Starting consensus calling iteration - if input is directory it will check for files that are new since last iteration')
+        read_list, total_reads, file_list = [], 0, []
+        short_reads = 0
 
-    splint_dict = {}
-    for splint in mm.fastx_read(args.splint_file, read_comment=False):
-        splint_dict[splint[0]] = [splint[1]]
-        splint_dict[splint[0]].append(mm.revcomp(splint[1]))
+        input_path=args.reads
+        if os.path.isdir(input_path):
+             print('\tRead input is a folder')
+             file_list=getFileList(input_path,done)
 
-    iteration, current_num, tmp_reads, target, reads_since_gc = 1, 0, [], min(args.groupSize,total_reads), 0
-    results={}
+        elif os.path.isfile(input_path):
+            print('\tRead input is a file')
+            file_list.append(input_path)
+            iterate=False
+        else:
+            print('\tno file provided')
+            iterate=False
+        print(f'\t{len(file_list)} file(s) provided')
+
+        if len(file_list)==0:
+            timeSinceLastFile=time.time()-timeAtLastFile
+            print(f'\t{round(timeSinceLastFile/60,2)} minutes since last file was provided. Will terminate if more than 30 minutes')
+            time.sleep(30)
+            if timeSinceLastFile>1800:
+                iterate=False
+            continue
+        else:
+            timeAtLastFile=time.time()
+
+            tmp_adapter_dict = {}
+            for reads in file_list:
+                for read in mm.fastx_read(reads, read_comment=False):
+                    if len(read[1]) < args.lencutoff:
+                        short_reads += 1
+                        continue
+                    tmp_adapter_dict[read[0]] = [[None, 1, None]] # [adapter, matches, strand]
+                    total_reads += 1
+
+            print(f'\t{total_reads} total reads to be processed')
+
+            adapter_dict, adapter_set, no_splint = preprocess(blat, args, tmp_dir, tmp_adapter_dict, total_reads, file_list)
+
+            outDict={}
+            outSubDict={}
+            outCountDict={}
+            for adapter in adapter_set:
+                if not os.path.exists(args.out_path + adapter):
+                    os.mkdir(args.out_path + adapter)
+                if not os.path.exists(args.out_path + '/tmp/' +adapter):
+                    os.mkdir(args.out_path + '/tmp/' +adapter)
+                outCountDict[adapter]=0
+                if args.compress_output:
+                    if resume:
+                        writeMode='ab+'
+                    elif first:
+                        writeMode='wb+'
+                    else:
+                        writeMode='ab+'
+                    outDict[adapter]=gzip.open(args.out_path + adapter +'/R2C2_Consensus.fasta.gz',writeMode)
+                    outSubDict[adapter]=gzip.open(args.out_path + adapter +'/R2C2_Subreads.fastq.gz',writeMode)
+                else:
+                    if resume:
+                        writeMode='a'
+                    elif first:
+                        writeMode='w'
+                    else:
+                        writeMode='a'
+                    outDict[adapter]=open(args.out_path + adapter +'/R2C2_Consensus.fasta',writeMode)
+                    outSubDict[adapter]=open(args.out_path + adapter +'/R2C2_Subreads.fastq',writeMode)
+
+            first=False
+            all_reads = total_reads + short_reads
+            print('C3POa version:', VERSION, file=log_file)
+            print('Total reads:', all_reads, file=log_file)
+            print('No splint reads:',
+                   no_splint,
+                   '({:.2f}%)'.format((no_splint/all_reads)*100),
+                   file=log_file)
+            print('Under len cutoff:',
+                   short_reads,
+                   '({:.2f}%)'.format((short_reads/all_reads)*100),
+                   file=log_file)
+            print('Total thrown away reads:',
+                   short_reads + no_splint,
+                   '({:.2f}%)'.format(((short_reads + no_splint)/all_reads)*100),
+                   file=log_file)
+            print('Reads after preprocessing:', all_reads - (short_reads + no_splint), file=log_file)
+
+            splint_dict = {}
+            for splint in mm.fastx_read(args.splint_file, read_comment=False):
+                splint_dict[splint[0]] = [splint[1]]
+                splint_dict[splint[0]].append(mm.revcomp(splint[1]))
+
+            iteration, current_num, tmp_reads, target, reads_since_gc = 1, 0, [], min(args.groupSize,total_reads), 0
+            results={}
 
 
-    for reads in file_list:
-        for read in mm.fastx_read(reads, read_comment=False):
-            if len(read[1]) < args.lencutoff:
-                continue
-            tmp_reads.append(read)
-            current_num += 1
-            if current_num == target:
-                pool = mp.Pool(args.numThreads)
-                length_tmp_reads=len(tmp_reads)
-                for index in range(length_tmp_reads):
-                    tmp_read=tmp_reads[index]
-                    name=tmp_read[0]
-                    if name in adapter_dict:
-                        read_adapter_info=adapter_dict[name]
-                        strand = read_adapter_info[1]
-                        if strand == '-':
+            for reads in file_list:
+                for read in mm.fastx_read(reads, read_comment=False):
+                    if len(read[1]) < args.lencutoff:
+                        continue
+                    tmp_reads.append(read)
+                    current_num += 1
+                    if current_num == target:
+                        pool = mp.Pool(args.numThreads)
+                        length_tmp_reads=len(tmp_reads)
+                        for index in range(length_tmp_reads):
+                            tmp_read=tmp_reads[index]
+                            name=tmp_read[0]
+                            if name in adapter_dict:
+                                read_adapter_info=adapter_dict[name]
+                                strand = read_adapter_info[1]
+                                if strand == '-':
                         # use reverse complement of the splint
-                            splint = splint_dict[read_adapter_info[0]][1]
-                        else:
-                            splint = splint_dict[read_adapter_info[0]][0]
-                        results[index]=pool.apply_async(analyze_reads,[args, tmp_read, splint, read_adapter_info[0], adapter_set, index, racon, tmp_dir,index+current_num-length_tmp_reads,total_reads])
+                                    splint = splint_dict[read_adapter_info[0]][1]
+                                else:
+                                    splint = splint_dict[read_adapter_info[0]][0]
+                                results[index]=pool.apply_async(analyze_reads,[args, tmp_read, splint, read_adapter_info[0], adapter_set, index, racon, tmp_dir,index+current_num-length_tmp_reads,total_reads,abpoa])
 
-                pool.close()
-                pool.join()
-                gc.collect()
-                adapters_with_reads=set()
-                for index,result in results.items():
-                    consensus,adapter,subs,peaks = result.get()
-                    if consensus:
-                        if args.compress_output:
-                            consensus=consensus.encode()
-                        outDict[adapter].write(consensus)
-                        for subname,subseq,subq in subs:
-                            entry='@%s\n%s\n+\n%s\n' %(subname+'D',subseq,subq)  ### To indicate Dorado subreads
-                            if args.compress_output:
-                                entry=entry.encode()
-                            outSubDict[adapter].write(entry)
+                        pool.close()
+                        pool.join()
+                        gc.collect()
+                        adapters_with_reads=set()
+                        for index,result in results.items():
+                            consensus,adapter,subs,peaks = result.get()
+                            if consensus:
+                                if args.compress_output:
+                                    consensus=consensus.encode()
+                                outDict[adapter].write(consensus)
+                                outCountDict[adapter]+=1
+                                for subname,subseq,subq in subs:
+                                    entry='@%s\n%s\n+\n%s\n' %(subname+'D',subseq,subq)  ### To indicate Dorado subreads
+                                    if args.compress_output:
+                                        entry=entry.encode()
+                                    outSubDict[adapter].write(entry)
 
-                results={}
-                iteration += 1
-                target = args.groupSize * iteration
-                if target >= total_reads:
-                    target = total_reads
-                tmp_reads = []
+                        results={}
+                        iteration += 1
+                        target = args.groupSize * iteration
+                        if target >= total_reads:
+                            target = total_reads
+                        tmp_reads = []
+
+            print(f'\n\tFinished generating consensus sequences')
+            for adapter in adapter_set:
+                outDict[adapter].close()
+                outSubDict[adapter].close()
+                print(f'\t{outCountDict[adapter]} consensus reads generated for {adapter}')
+            for reads in file_list:
+                log_file.write(f'processed {os.path.abspath(reads)}\n')
 
 
-    for adapter in adapter_set:
-        outDict[adapter].close()
-        outSubDict[adapter].close()
-    print('')
+            for reads in file_list:
+                done.add(reads)
+    log_file.close()
+    print('\n')
 
 if __name__ == '__main__':
     args = parse_args()

@@ -194,9 +194,8 @@ def main(args):
             for line in open(args.out_path + 'c3poa.log'):
                 if line.startswith('processed '):
                     processed = line.strip()[10:]
-                    print(processed)
                     done.add(os.path.abspath(processed))
-        print(f'{len(done)} processed files found in log file. They will be skipped',done)
+        print(f'{len(done)} processed files found in log file. They will be skipped')
 
     log_file = open(args.out_path + 'c3poa.log', 'a+')
     log_file.write(f'C3POa version: {VERSION}\n')

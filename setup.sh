@@ -4,7 +4,7 @@ cwd=$(pwd)
 
 # Resolve dependencies
 
-echo 'Pip installables (scipy, numpy, mappy, Cython editdistance)'
+echo 'Pip installables (scipy, numpy, mappy, Cython)'
 python3 -m pip install --user --upgrade scipy numpy mappy Cython editdistance
 
 echo 'conk'
@@ -35,5 +35,7 @@ cd blat
 wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/blat/blat
 chmod +x blat
 cd $cwd
+
+
 
 echo 'Done'

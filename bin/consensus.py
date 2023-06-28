@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
 # Roger Volden
+import mappy
 
-def consensus(sequences, qualityDict):
+def consensus(sequences, qualityDict,name,type1):
     '''
     Makes a consensus sequence based on base frequency and quality.
     sequences: list of aligned sequences.
     qualityDict: dictionary of sequences : quality scores.
     Returns a consensus sequence.
     '''
+
     consensus = ''
+    qual=False
+    for seq in sequences:
+        if seq.replace('-', '') not in qualityDict:
+            print('seq',name)
+            print('seq',seq.replace('-', ''),seq)
+            qual=True
+    if qual:
+        print(type1,qualityDict)
     seqA, seqB = sequences[0], sequences[1]
+
+
     seqAq, seqBq = qualityDict[seqA.replace('-', '')], qualityDict[seqB.replace('-', '')]
     seqAqual = normalizeLen(seqA, seqAq)
     seqBqual = normalizeLen(seqB, seqBq)
@@ -73,9 +85,9 @@ def normalizeLen(seq, quality):
             gapLen += 1
     return newQuality
 
-def pairwise_consensus(poa_subreads, subreads, sub_quals):
+def pairwise_consensus(poa_subreads, subreads, sub_quals,name,type1):
     seqDict = {}
     for i in range(len(subreads)):
         seqDict[subreads[i]] = sub_quals[i]
-    pw_cons = consensus(poa_subreads, seqDict)
+    pw_cons = consensus(poa_subreads, seqDict,name,type1)
     return pw_cons

@@ -178,21 +178,21 @@ You can have an arbitrary number of those but we have only tested one 5 and one 
 This is how your header line and first sample lines would look:
 
 ```bash
-Name	Splint	5[0:16]	3[0:16]
+Name	Splint	5.0:16.AC.NNNNNNNN.TC	3.0:16.GT.NNNNNNNN.AC
 Sample1	UMI_Splint1	ATATATAT	CGCGCGCG
 Sample1	UMI_Splint3	CGATAGTG	ATCGAGTA
 Sample2	UMI_Splint1	TGGTGGAT	TAGGACTA	
 ```
 
-C3POa_postprocessing will look at the first 16 bases of the reads 5prime end for the first index and the first 16 bases of the 3prime end for the second index.
-Include some extra bases around your index to have a little wiggle for the adapter matching.
+C3POa_postprocessing will look at the first 16 bases of the reads 5prime end for the first index which is 8 variable bases (N) flanked by AC and TC on either side. It will then look at the first 16 bases of the 3prime end for the second index which 8 varibale bases flanked by GT and AC on either side.
+Pick a range (e.g. "0:16" that will surely contain the index. Pick flanking bases based on sequence context of your library adapters. You can use Ns, and other IUPAC wildcard bases for both flanking and index positions. 
 
 2) If your reads are undirectional and you used the -u flag (for example regular Smartseq2 cDNA) but you used an index in either the TSO or oligodT primer, you can use an 'E' (for either) index.
 You can only use one E index and they are not compatible with 5prime and 3prime indexes.
 This is how your header line and first sample lines would look:
 
 ```bash
-Name    Splint  E5[0:16]
+Name    Splint  E5.0:16.AC.NNNNNNNN.TC
 Sample1 UMI_Splint1     ATATATAT
 Sample1 UMI_Splint3     CGATAGTG
 Sample2 UMI_Splint1     TGGTGGAT

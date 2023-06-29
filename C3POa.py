@@ -48,13 +48,10 @@ def parse_args():
                         help='Use to exclude zero repeat reads. Defaults to True (includes zero repeats).')
     parser.add_argument('--numThreads', '-n', type=int, default=1,
                         help='Number of threads to use during multiprocessing. Defaults to 1.')
-    parser.add_argument('--groupSize', '-g', type=int, default=100000,
-                        help='Number of reads processed by each thread in each iteration. Defaults to 100000.')
-    parser.add_argument('--blatThreads', '-b', action='store_true', default=False,
-                        help='''Use to chunk blat across the number of threads instead of by groupSize (faster).''')
     parser.add_argument('--compress_output', '-co', action='store_true', default=False,
                         help='Use to compress (gzip) both the consensus fasta and subread fastq output files.')
-
+    parser.add_argument('--peakFinderSettings', '-p', action='store', default='20,3,41,2',
+                        help='Only set this if you have a really short splint (<50nt) and all your reads are discarded. Defaults to "20,3,41,2". Try "30,3,15,2" for a short splint. No promises though. We only tested C3POa for splints >100nt')
     parser.add_argument('--resume', '-u', action='store_true', default=False,
                         help='''If set, C3POa will look for c3poa.log file in output directory. 
                                 If c3poa.log exists, files marked as processed in the file will be skipped. 
@@ -87,8 +84,9 @@ def rounding(x, base):
     return int(base * round(float(x) / base))
 def analyze_reads(args, read, splint, read_adapter, racon, tmp_dir,abpoa):
 
-    penalty, iters, window, order = 20, 3, 41, 2
-#        penalty, iters, window, order = 30, 3, 15, 2 #shorter splint
+    peakFinderSettings=args.peakFinderSettings.split(',')
+    penalty, iters, window, order = int(peakFinderSettings[0]),int(peakFinderSettings[1]),int(peakFinderSettings[2]),int(peakFinderSettings[3])
+
     name, seq, qual = read[0], read[1], read[2]
     seq_len = len(seq)
     use=False
@@ -231,7 +229,7 @@ def main(args):
 
         elif os.path.isfile(input_path):
             print('\tRead input is a file')
-            file_list.append(input_path)
+            file_list=[os.path.abspath(input_path)]
             iterate=False
         else:
             print('\tno file provided')
@@ -280,7 +278,6 @@ def main(args):
                             splint = splint_dict[read_adapter_info[0]][0]
                         results[name]=pool.apply_async(analyze_reads,[args, [name,seq,q], splint, read_adapter_info[0], racon, tmp_dir,abpoa])
 
-#                print(f'\tfinished file {fileCounter} of {totalFileCount}',' '*60,end='\r')
                 start=time.time()
                 if fileCounter%10==0:
                     pool.close()
@@ -288,7 +285,6 @@ def main(args):
                     gc.collect()
                     print('\t','-'*20,'restarting multithreading pool','-'*20,' '*70,end='\r')
                     pool = mp.Pool(args.numThreads)
-#                print('garbage collection took ',time.time()-start)
 
 
                 consNumber=0
@@ -326,7 +322,6 @@ def main(args):
                     outDict[adapter].close()
                     outSubDict[adapter].close()
                     log_file.write(f'\t{outCountDict[adapter]} consensus reads generated for {adapter}\n')
-#                    print(f'\t{outCountDict[adapter]} consensus reads generated for {adapter}')
                 log_file.write(f'processed {os.path.abspath(reads)}\n')
                 done.add(reads)
             print('\n')

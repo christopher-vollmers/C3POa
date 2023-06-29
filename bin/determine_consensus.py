@@ -2,7 +2,6 @@
 # Roger Volden
 
 import editdistance
-import pyabpoa as poa
 import mappy as mm
 import os
 import subprocess
@@ -16,7 +15,6 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
     repeats = len(subreads)
     subs=[]
     final_cons,subs,abpoa_cons = '', [],''
-    poa_aligner = poa.msa_aligner(match=5)
     if repeats == 0:
         final_cons,subs = '', []
         if args.zero and len(dangling_subreads) == 2:

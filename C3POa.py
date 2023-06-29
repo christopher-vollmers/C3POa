@@ -70,7 +70,7 @@ def getFileList(query_path,done):
     file_list=[]
     '''Takes a path and returns a list of fast5 files excluding the most recent fast5.'''
     for file in os.listdir(query_path):
-        if 'fastq' in file:
+        if 'fastq' in file and 'temp' not in file:
             if os.path.abspath(query_path+file) not in done:
                 file_list.append(os.path.abspath(query_path+file))
     if file_list:

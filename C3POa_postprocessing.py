@@ -210,17 +210,13 @@ def parse_blat(path, reads):
 def match_index(seq, seq_to_idx,minDist,maxDist):
     dist_dict, dist_list = {}, []
     # there needs to be a better/more efficient way to do this.
-    for position in range(len(seq)):
-        for idx_seq, idx in seq_to_idx.items():
-            idx=tuple(sorted(list(idx)))
-            if idx not in dist_dict:
-                dist_dict[idx] = []
-            query = seq[position:position + len(idx_seq)]
-            if len(query) != len(idx_seq):
-                break
-            else:
-                dist = ld.eval(query, idx_seq)
-                dist_dict[idx].append(dist)
+    for idx_seq, idx in seq_to_idx.items():
+        idx=tuple(sorted(list(idx)))
+        if idx not in dist_dict:
+            dist_dict[idx] = []
+        query = seq
+        dist = ld.eval(query, idx_seq)
+        dist_dict[idx].append(dist)
     for idx, distances in dist_dict.items():
         dist_list.append((idx, min(distances)))
     dist_list = sorted(dist_list, key=lambda x: x[1])
@@ -357,41 +353,97 @@ def readSamplesheet(readFolder,sampleSheet):
     return indexDict, indexes, SplintOnly, countDict,outDict
 
 # print(indexDict)
-counter=0
 
+
+def findIndexSequence(sequence,pattern):
+
+    IUPACdict={}
+    IUPACdict['A']=set(['A'])
+    IUPACdict['T']=set(['T'])
+    IUPACdict['G']=set(['G'])
+    IUPACdict['C']=set(['C'])
+    IUPACdict['R']=set(['A','G'])
+    IUPACdict['Y']=set(['C','T'])
+    IUPACdict['S']=set(['G','C'])
+    IUPACdict['W']=set(['A','T'])
+    IUPACdict['K']=set(['G','T'])
+    IUPACdict['M']=set(['A','C'])
+    IUPACdict['B']=set(['C','G','T'])
+    IUPACdict['D']=set(['A','G','T'])
+    IUPACdict['H']=set(['A','C','T'])
+    IUPACdict['V']=set(['A','C','G'])
+    IUPACdict['N']=set(['A','T','G','C'])
+    UMI=''
+    valid=True
+    direction,range1,left,variable,right = pattern.split('.')
+    if direction not in ['5','3','E']:
+        print('invalid pattern, direction has to be 5 or 3')
+        valid=False
+        reason='invalid direction'
+    if direction=='3':
+        sequence=mm.revcomp(sequence)
+
+
+    start,end = int(range1.split(':')[0]),int(range1.split(':')[1])
+    left_variable_start=''
+    right_start=''
+    if len(sequence)<100:
+        valid=False
+        reason='sequence shorter than 100nt'
+
+    if valid:
+        UMIpattern=left+variable+right
+        valid=False
+        reason='no UMI pattern match'
+
+
+
+        for pos in range(start,end,1):
+            matches=0
+            match=sequence[pos:pos+len(UMIpattern)].upper()
+            for index in range(0,len(UMIpattern),1):
+                v_base=UMIpattern[index]
+                s_base=match[index]
+                if s_base in IUPACdict[v_base]:
+                    matches+=1
+            if len(UMIpattern)==matches:
+                if right:
+                    UMI=match[len(left):-len(right)]
+                else:
+                    UMI=match[len(left):]
+                valid=True
+                break
+
+    if valid:
+        return UMI,'UMI found that matched pattern '+pattern
+    else:
+        return '', reason
+
+
+
+
+
+counter=0
 def demultiplex(seq,seq_to_idx,minDist,maxDist,libraryName,number,total):
     if not libraryName:
         matchSet=[]
         for index,entries in seq_to_idx.items():
             if index[0]=='E':
-                Actual = index[1]
-                Dir = Actual
-                boundaries = index[3:-1].split(':')
-                readseq1 = seq[int(boundaries[0]):int(boundaries[1])]
-                readseq2 = mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
-                left = match_index(readseq1,entries,minDist,maxDist)
-                if len(left) == 0:
-                    right = match_index(readseq2,entries,minDist,maxDist)
-                    if len(right) == 0:
-                        matchSet.append('Undetermined')
-                    else:
-                        matchSet.append(right)
-                        Dir='3'
+                readSeq, reason = findIndexSequence(seq,'5'+index[2:])
+                if readSeq:
+                    matchSet.append(match_index(readSeq,entries,minDist,maxDist))
                 else:
-                    matchSet.append(left)
-                    Dir='5'
-                if Actual!=Dir:
-                    seq=mm.revcomp(seq)
-            elif index[0]=='5':
-                boundaries=index[2:-1].split(':')
-                readseq=seq[int(boundaries[0]):int(boundaries[1])]
-                matchSet.append(match_index(readseq,entries,minDist,maxDist))
-
-            elif index[0]=='3':
-                boundaries=index[2:-1].split(':')
-                readseq=mm.revcomp(seq)[int(boundaries[0]):int(boundaries[1])]
-                matchSet.append(match_index(readseq,entries,minDist,maxDist))
-
+                    readSeq, reason = findIndexSequence(seq,'3'+index[2:])
+                    if readSeq:
+                        matchSet.append(match_index(readSeq,entries,minDist,maxDist))
+                        if index[1]=='5':
+                            seq=mm.revcomp(seq)
+                    else:
+                        matchSet.append('Undetermined')
+            else:
+                readSeq, reason = findIndexSequence(seq,index)
+                matchSet.append(match_index(readSeq,entries,minDist,maxDist))
+            print(index, readSeq)
 
         if 'Undetermined' in matchSet:
             libraryName = 'Undetermined'
@@ -408,6 +460,7 @@ def demultiplex(seq,seq_to_idx,minDist,maxDist,libraryName,number,total):
                 libraryName = list(root)[0]
             else:
                 libraryName = 'Undetermined'
+        print(libraryName)
     print(f'\tfinished read {number} of {total} reads total ~{str(round((number/total)*100,2))}%',' '*20, end='\r')
     return libraryName,seq
 
@@ -416,7 +469,7 @@ def main(args):
 
     blat = 'blat'
 
-    print(f'C3POa postprocessing {VERSION} - Finding and trimming adapters; optional samplesheet based demultiplexing')
+    print(f'C3POa postprocessing {VERSION}\nFinding and trimming adapters; optional samplesheet based demultiplexing')
 
 
     input_folder=args.input_folder

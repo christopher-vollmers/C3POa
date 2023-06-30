@@ -60,17 +60,12 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
             else:
                 os.system(f'{abpoa} -M 5 -r 0 -S {tmp_subread_fl_file} > {abpoa_fasta} 2> abpoa.messages')
 
-#            res = poa_aligner.msa(subreads, out_cons=True, out_msa=True)
-#            abpoa_cons1 = res.cons_seq[0]
-
-
             cons_seq=''
             for consName,consSeq,consQ in mm.fastx_read(f'{abpoa_fasta}'):
                 cons_seq=consSeq
             if cons_seq:
                 abpoa_cons = cons_seq
 
-#            print(len(abpoa_cons),len(abpoa_cons1),editdistance.eval(abpoa_cons,abpoa_cons1))
 
 
     if abpoa_cons:

@@ -229,7 +229,12 @@ def main(args):
 
         elif os.path.isfile(input_path):
             print('\tRead input is a file')
-            file_list=[os.path.abspath(input_path)]
+            file_list=[]
+            if resume:
+                if os.path.abspath(input_path) not in done:
+                    file_list.append(os.path.abspath(input_path))
+            else:
+                file_list.append(os.path.abspath(input_path))
             iterate=False
         else:
             print('\tno file provided')
@@ -238,7 +243,7 @@ def main(args):
 
         if len(file_list)==0:
             timeSinceLastFile=time.time()-timeAtLastFile
-            print(f'\t{round(timeSinceLastFile/60,2)} minutes since last file was provided. Will terminate if more than 30 minutes')
+            print(f'\t{round(timeSinceLastFile/60,2)} minutes since last file was provided. Will terminate now if input was fastq file or after more than 30 minutes if input was directory')
             time.sleep(30)
             if timeSinceLastFile>1800:
                 iterate=False

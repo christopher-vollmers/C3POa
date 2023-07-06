@@ -320,7 +320,7 @@ def main(args):
                 projectedTime = round(averageTime*(totalFileCount-fileCounter),1)
                 unit='m'
                 if projectedTime > 60:
-                    projectedTime= round(projectTime/60,1)
+                    projectedTime= round(projectedTime/60,1)
                     unit ='h'
                 print(f'\tFinished generating consensus sequences for file {fileCounter} of {totalFileCount} ({consNumberTotal} consensus reads total). Avg. time per file: {round(np.average(fileTimes)/60,1)}m. Estimated {projectedTime}{unit} remaining', ' '*10,end='\r')
                 for adapter in adapter_set:

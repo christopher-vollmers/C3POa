@@ -311,7 +311,7 @@ def main(args):
 
                 log_file.write(f'Too short reads: {short_reads}'+' ({:.2f}%)'.format((short_reads/total_reads)*100)+'\n')
                 log_file.write(f'No splint reads: {no_splint_reads}'+' ({:.2f}%)'.format((no_splint/total_reads)*100)+'\n')
-                log_file.write(f'Successful consensus reads: {consNumber}'+' ({:.2f}%)'.format((no_splint/total_reads)*100)+'\n')
+                log_file.write(f'Successful consensus reads: {consNumber}'+' ({:.2f}%)'.format((consNumber/total_reads)*100)+'\n')
 
                 fileEnd=time.time()
                 fileTimes.append(fileEnd-fileStart)

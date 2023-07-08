@@ -260,12 +260,12 @@ def main(args):
             fileCounter=0
             totalFileCount=len(file_list)
             log_file.write(f'Total files to process: {totalFileCount}\n')
+            pool = mp.Pool(args.numThreads)
             for reads in file_list:
                 fileCounter+=1
                 adapter_dict, adapter_set, no_splint = preprocess(blat, args, tmp_dir, reads)
                 for adapter in adapter_set:
                         outDict,outSubDict,outCountDict,previous=create_files(adapter,args,outDict,outSubDict,outCountDict,previous,resume)
-                pool = mp.Pool(args.numThreads)
                 results={}
                 for name,seq,q in mm.fastx_read(reads, read_comment=False):
                     total_reads+=1

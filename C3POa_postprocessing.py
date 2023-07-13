@@ -443,7 +443,6 @@ def demultiplex(seq,seq_to_idx,minDist,maxDist,libraryName,number,total):
             else:
                 readSeq, reason = findIndexSequence(seq,index)
                 matchSet.append(match_index(readSeq,entries,minDist,maxDist))
-            print(index, readSeq)
 
         if 'Undetermined' in matchSet:
             libraryName = 'Undetermined'
@@ -460,7 +459,6 @@ def demultiplex(seq,seq_to_idx,minDist,maxDist,libraryName,number,total):
                 libraryName = list(root)[0]
             else:
                 libraryName = 'Undetermined'
-        print(libraryName)
     print(f'\tfinished read {number} of {total} reads total ~{str(round((number/total)*100,2))}%',' '*20, end='\r')
     return libraryName,seq
 

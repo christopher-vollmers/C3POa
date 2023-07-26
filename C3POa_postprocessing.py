@@ -39,14 +39,16 @@ def parse_args():
 
     parser.add_argument('--threads', '-n', type=int, default=1,
                         help='Number of threads to use during multiprocessing. Defaults to 1.')
-    parser.add_argument('--groupSize', '-g', type=int, default=1000,
-                        help='Number of reads processed by each thread in each iteration. Defaults to 1000.')
+    parser.add_argument('--groupSize', '-g', type=int, default=10000,
+                        help='Number of reads processed by each thread in each iteration. Defaults to 10000.')
     parser.add_argument('--maxDist', '-M', type=int, default=2,
                         help='editdistance between read and best matching index in sample sheet has to be smaller than this number to return a match')
     parser.add_argument('--minDist', '-m', type=int, default=1,
                         help='editdistance difference between read and best matching index and read and second best matching index has to be bigger than this number to return a match')
     parser.add_argument('--blatThreads', '-bt', action='store_true', default=False,
                         help='''Use to chunk blat across the number of threads instead of by groupSize (faster).''')
+    parser.add_argument('--skip_trimming', '-s', action='store_true', default=False,
+                        help='''Use to demultiplex an already trimmed dataset''')
     parser.add_argument('--compress_output', '-co', action='store_true', default=False,
                         help='Use to compress (gzip) both the consensus fasta and subread fastq output files.')
     parser.add_argument('--version', '-v', action='version', version=VERSION, help='Prints the C3POa version.')
@@ -471,18 +473,26 @@ def main(args):
 
 
     input_folder=args.input_folder
-    print(f'\n\nFinding and Trimming adapters in directory {input_folder}\n\n')
 
+    skip_trimming=args.skip_trimming
     minDist=args.minDist
     maxDist=args.maxDist
-    for folder in os.listdir(input_folder):
-        subfolder=input_folder+'/'+folder
-        if os.path.isdir(subfolder):
-            for file in os.listdir(subfolder):
-                if 'R2C2_Consensus.fasta' in file:
-                    print('Finding and trimming adapters in file', subfolder, file)
-                    input_fasta=subfolder+'/'+file
-                    chunk_process(input_fasta,subfolder, args, blat)
+
+
+    if not skip_trimming:
+        print(f'\n\nFinding and Trimming adapters in directory {input_folder}\n\n')
+
+        for folder in os.listdir(input_folder):
+            subfolder=input_folder+'/'+folder
+            if os.path.isdir(subfolder):
+                for file in os.listdir(subfolder):
+                    if 'R2C2_Consensus.fasta' in file:
+                        print('Finding and trimming adapters in file', subfolder, file)
+                        input_fasta=subfolder+'/'+file
+                        chunk_process(input_fasta,subfolder, args, blat)
+    else:
+        print(f'\n\nskipping the trimming step for {input_folder}\n\n')
+
 
     if args.samplesheet:
         print('\n\nStarting to demultiplex \n\n')

@@ -253,7 +253,7 @@ def main(args):
             total_reads=0
             short_reads = 0
             no_splint_reads=0
-
+            consNumber=0
             outDict={}
             outSubDict={}
             outCountDict={}
@@ -292,7 +292,6 @@ def main(args):
                     pool = mp.Pool(args.numThreads)
 
 
-                consNumber=0
                 adapters_with_reads=set()
                 for index,result in results.items():
                     consensus,adapter,subs,peaks = result.get()
@@ -328,6 +327,7 @@ def main(args):
                     outSubDict[adapter].close()
                     log_file.write(f'\t{outCountDict[adapter]} consensus reads generated for {adapter}\n')
                 log_file.write(f'processed {os.path.abspath(reads)}\n')
+                log_file.flush()
                 done.add(reads)
             print('\n')
     log_file.close()

@@ -467,7 +467,6 @@ def demultiplex(seq,seq_to_idx,minDist,maxDist,libraryName,number,total):
 
 def main(args):
 
-    blat = 'blat'
 
     print(f'C3POa postprocessing {VERSION}\nFinding and trimming adapters; optional samplesheet based demultiplexing')
 

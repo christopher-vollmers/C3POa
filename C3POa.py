@@ -39,7 +39,7 @@ def parse_args():
                         help='''Sets the median distance cutoff for consensus sequences.
                                 Anything shorter will be excluded. Defaults to 500.''')
     parser.add_argument('--nosplint', '-ns', action='store_true',
-                        help='''When set the first 300 bases of each read are used as splint''')
+                        help='''When set the first bases 200-400 of each read are used as splint''')
     parser.add_argument('--zero', '-z', action='store_false', default=True,
                         help='Use to exclude zero repeat reads. Defaults to True (includes zero repeats).')
     parser.add_argument('--numThreads', '-n', type=int, default=1,
@@ -49,8 +49,8 @@ def parse_args():
     parser.add_argument('--peakFinderSettings', '-p', action='store', default='20,3,41,2',
                         help='Only set this if you have a really short splint (<50nt) and all your reads are discarded. Defaults to "20,3,41,2". Try "30,3,15,2" for a short splint. No promises though. We only tested C3POa for splints >100nt')
     parser.add_argument('--resume', '-u', action='store_true', default=False,
-                        help='''If set, C3POa will look for c3poa.log file in output directory. 
-                                If c3poa.log exists, files marked as processed in the file will be skipped. 
+                        help='''If set, C3POa will look for processed.log file in output directory. 
+                                If processed.log exists, reads marked as processed in the input will be skipped. 
                                 Output will be appended to existing output files.''')
     parser.add_argument('--version', '-v', action='version', version=VERSION, help='Prints the C3POa version.')
 

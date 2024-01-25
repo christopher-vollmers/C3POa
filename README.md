@@ -97,7 +97,8 @@ optional
   --compress_output, -co
                         Use to compress (gzip) both the consensus fasta and subread fastq output files.
 
-  --resume, -u          If set, C3POa will look for c3poa.log file in output directory. If c3poa.log exists, files marked as processed in the file will be skipped.
+  --nosplint, -ns       When set the first bases 200-400 of each read are used as splint
+  --resume, -u          If set, C3POa will look for processed.log file in output directory. If processed.log exists, reads marked as processed in the input will be skipped.
                         Output will be appended to existing output files.
   --version, -v         Prints the C3POa version.
 

@@ -18,7 +18,7 @@ sys.path.append(os.path.abspath(PATH))
 C3POaPath = '/'.join(os.path.realpath(__file__).split('/')[:-1]) + '/'
 
 
-VERSION = "v3.2 - It's over Anakin. I have the consensus!"
+VERSION = "v3.2 - Bombad Consensus"
 
 def parse_args():
     '''Parses arguments.'''

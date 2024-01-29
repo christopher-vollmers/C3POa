@@ -12,7 +12,7 @@ import gzip
 import gc
 
 
-VERSION = "v3  - It's over Anakin. I have the consensus!"
+VERSION = "v3.2  - Bombad Consensus"
 
 C3POaPath = '/'.join(os.path.realpath(__file__).split('/')[:-1]) + '/'
 blat=C3POaPath+'/blat/blat'

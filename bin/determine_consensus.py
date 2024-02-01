@@ -14,11 +14,12 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
     name, seq, qual = read[0], read[1], read[2]
     repeats = len(subreads)
     subs=[]
+    tmp_files=[]
     final_cons,subs,abpoa_cons = '', [],''
     if repeats == 0:
         final_cons,subs = '', []
         if args.zero and len(dangling_subreads) == 2:
-            tmp_final_cons, tmp_subs = zero_repeats(name, seq, qual, dangling_subreads, qual_dangling_subreads,subs,tmp_dir,abpoa)
+            tmp_final_cons, tmp_subs,tmp_files = zero_repeats(name, seq, qual, dangling_subreads, qual_dangling_subreads,subs,tmp_dir,abpoa,tmp_files)
             if tmp_final_cons and len(tmp_final_cons) >= args.mdistcutoff:
                 final_cons = tmp_final_cons
                 subs = tmp_subs
@@ -26,14 +27,17 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
         # overlap file is where the mappy alignment will go (req. by racon)
         overlap_file = tmp_dir + '{name}_overlaps.paf'.format(name=name)
         overlap_fh = open(overlap_file, 'w+')
+        tmp_files.append(overlap_file)
         # temporary subreads specific for the current read (req. by racon)
         tmp_subread_file = tmp_dir + f'{name}_subreads.fastq'
         tmp_subread_fh = open(tmp_subread_file, 'w+')
+        tmp_files.append(tmp_subread_file)
         abpoa_msa=f'{tmp_dir}{name}.msa'
         abpoa_fasta=f'{tmp_dir}{name}.fasta'
         # align subreads together using abPOA
         tmp_subread_fl_file = tmp_dir + f'{name}_fl_subreads.fastq'
         tmp_subread_fl_fh = open(tmp_subread_fl_file, 'w+')
+        tmp_files.append(tmp_subread_fl_file)
         insert_lengths=[]
         for i in range(len(subreads)):
             tmp_subread_fl_fh.write(f'@{i+1}\n{subreads[i]}\n+\n{sub_qual[i]}\n')
@@ -48,6 +52,7 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
                 os.system(f'{abpoa} -M 5 -r 1 {tmp_subread_fl_file} > {abpoa_msa} 2> abpoa.messages')
             else:
                 os.system(f'{abpoa} -M 5 -r 1 -S {tmp_subread_fl_file} > {abpoa_msa} 2> abpoa.messages')
+            tmp_files.append(abpoa_msa)
             if not os.path.getsize(abpoa_msa)==0:
                 msaSequences=[]
                 for msaName,msaSeq,msaQ in mm.fastx_read(abpoa_msa):
@@ -59,7 +64,7 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
                 os.system(f'{abpoa} -M 5 -r 0 {tmp_subread_fl_file} > {abpoa_fasta} 2> abpoa.messages')
             else:
                 os.system(f'{abpoa} -M 5 -r 0 -S {tmp_subread_fl_file} > {abpoa_fasta} 2> abpoa.messages')
-
+            tmp_files.append(abpoa_fasta)
             cons_seq=''
             for consName,consSeq,consQ in mm.fastx_read(f'{abpoa_fasta}'):
                 cons_seq=consSeq
@@ -73,6 +78,7 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
         # have to write out the consensus seq because it's going to get polished by racon
         abpoa_out = tmp_dir + f'{name}_abpoa.fasta'
         abpoa_out_fh = open(abpoa_out, 'w+')
+        tmp_files.append(abpoa_out)
         abpoa_out_fh.write(f'>{name}\n{abpoa_cons}\n')
         abpoa_out_fh.close()
         # map each of the subreads to the poa consensus
@@ -102,6 +108,7 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
 
         racon_cons_file = tmp_dir + '{name}_racon_cons.fasta'.format(name=name)
         racon_cons_fh = open(racon_cons_file, 'w+')
+        tmp_files.append(racon_cons_file)
         racon_msgs_fh = open(tmp_dir + 'racon_messages.log', 'w+')
 
     # polish poa cons with the subreads
@@ -114,11 +121,12 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
         for read in mm.fastx_read(racon_cons_file, read_comment=False):
             final_cons = read[1]
 
-        os.system(f'rm {tmp_dir}{name}*')
+    for tmp_file in tmp_files:
+        os.system(f'rm {tmp_file}')
 
     return final_cons, repeats, subs
 
-def zero_repeats(name, seq, qual, subreads, sub_qual,subs,tmp_dir,abpoa):
+def zero_repeats(name, seq, qual, subreads, sub_qual,subs,tmp_dir,abpoa,tmp_files):
     # subread is the master subread fastq for this group
     for i in range(len(subreads)):
         subs.append((name + '_' + str(i),subreads[i],sub_qual[i]))
@@ -128,7 +136,7 @@ def zero_repeats(name, seq, qual, subreads, sub_qual,subs,tmp_dir,abpoa):
     for hit in mm_align.map(subreads[1]):
         mappy_res = [hit.r_st, hit.r_en, hit.q_st, hit.q_en]
     if not mappy_res:
-        return '',subs
+        return '',subs,tmp_files
 
     left = subreads[1][:mappy_res[2]]
     right = subreads[0][mappy_res[1]:]
@@ -139,18 +147,21 @@ def zero_repeats(name, seq, qual, subreads, sub_qual,subs,tmp_dir,abpoa):
 
     tmp_file=tmp_dir + f'{name}_overlaps.fasta'
     tmp_file_fh=open(tmp_file,'w')
+    tmp_files.append(tmp_file)
     tmp_file_fh.write(f'>1\n{overlap_seq1}\n>2\n{overlap_seq2}\n')
     tmp_file_fh.close()
     if len(overlap_seq1)<8000:
         os.system(f'{abpoa} -M 5 -r 1 {tmp_file} > {tmp_dir}{name}.pw.msa 2> apboa.messages')
     else:
         os.system(f'{abpoa} -M 5 -r 1 -S {tmp_file} > {tmp_dir}{name}.pw.msa 2> apboa.messages')
+
+    tmp_files.append(f'{tmp_dir}{name}.pw.msa')
     if os.path.getsize(f'{tmp_dir}{name}.pw.msa')==0:
-        return '',subs
+        return '',subs,tmp_files
     else:
         msaSequences=[]
         for msaName,msaSeq,msaQ in mm.fastx_read(f'{tmp_dir}{name}.pw.msa'):
             msaSequences.append(msaSeq)
         abpoa_cons = pairwise_consensus(msaSequences, [overlap_seq1, overlap_seq2], [overlap_qual1, overlap_qual2],name,'zero')
         corrected_cons = left + abpoa_cons + right
-        return corrected_cons,subs
+        return corrected_cons,subs,tmp_files

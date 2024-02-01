@@ -434,6 +434,9 @@ def demultiplex(seq,seq_to_idx,minDist,maxDist,libraryName,number,total):
                 readSeq, reason = findIndexSequence(seq,'5'+index[2:])
                 if readSeq:
                     matchSet.append(match_index(readSeq,entries,minDist,maxDist))
+                    if index[1]=='3':
+                        seq=mm.revcomp(seq)
+
                 else:
                     readSeq, reason = findIndexSequence(seq,'3'+index[2:])
                     if readSeq:

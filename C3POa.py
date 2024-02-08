@@ -85,7 +85,7 @@ def main(args):
     argString+=f'-d {args.mdistcutoff} '
     if args.nosplint:
         argString+=f'-ns '
-    if args.zero:
+    if not args.zero:
         argString+=f'-z '
     argString+=f'-n {args.numThreads} '
     if args.compress_output:

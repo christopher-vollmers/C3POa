@@ -5,7 +5,6 @@ import os
 import sys
 import numpy as np
 import argparse
-import multiprocessing as mp
 import mappy as mm
 from conk import conk
 import gc
@@ -93,8 +92,28 @@ def main(args):
     argString+=f'-p {args.peakFinderSettings} '
     print(argString)
 
+    resume=args.resume
+
     print(f'C3POa {VERSION} \nGenerating consensus sequences from R2C2 read data')
-    if not args.resume:
+
+    done=set()
+    processed_reads=set()
+    if resume:
+        print(f'\n--resume option is True: Looking for existing log file in {args.out_path}')
+        if os.path.isfile(args.out_path + 'processed.log'):
+            print('log file found')
+            writeMode='a'
+            for line in open(args.out_path + 'processed.log'):
+                processed_reads.add(line.strip())
+        else:
+            print('no log file found')
+            writeMode='w'
+
+        print(f'{len(processed_reads)} processed reads found in log file. They will be skipped\n')
+
+
+    else:
+        writeMode='w'
         print('\nRemoving old results\n')
         if not args.nosplint:
             splint_dict = {}
@@ -105,22 +124,13 @@ def main(args):
             if os.path.isdir(f'{args.out_path}/noSplint'):
                 os.system(f'rm -r {args.out_path}/noSplint')
 
+    processed_file=open(f'{args.out_path}/processed.log',writeMode)
+
     if not args.out_path.endswith('/'):
         args.out_path += '/'
     if not os.path.exists(args.out_path):
         os.mkdir(args.out_path)
 
-
-    resume=args.resume
-    done=set()
-    processed_reads=set()
-    if resume:
-        print(f'\n--resume option is True: Looking for existing log file in {args.out_path}')
-        if os.path.isfile(args.out_path + 'processed.log'):
-            print('log file found')
-            for line in open(args.out_path + 'processed.log'):
-                processed_reads.add(line.strip())
-        print(f'{len(processed_reads)} processed reads found in log file. They will be skipped\n')
 
     log_file = open(args.out_path + 'c3poa.log', 'a+')
     log_file.write(f'C3POa version: {VERSION}\n')
@@ -141,7 +151,7 @@ def main(args):
             os.mkdir(tmp_dir)
 
         print('Starting consensus calling iteration - if input is directory it will check for files that are new since last iteration')
-
+        processed_file=open(f'{args.out_path}/processed.log','a')
 
         input_path=args.reads
         if os.path.isdir(input_path):
@@ -171,11 +181,6 @@ def main(args):
             timeAtLastFile=time.time()
             log_file.write(f'Total files to process: {len(file_list)}\n')
             tmp_file=open(f'{tmp_dir}/tmp_file','w')
-            if args.resume:
-                writeMode='a'
-            else:
-                writeMode='w'
-            processed_file=open(f'{args.out_path}/processed.log',writeMode)
             for reads in file_list:
                 total_reads=0
                 print(f'\tProcessing file {reads}')
@@ -198,12 +203,12 @@ def main(args):
                 done.add(reads)
 
             print('\n')
+        processed_file.close()
+
     log_file.close()
-    processed_file.close()
     print('\n')
 
 if __name__ == '__main__':
     args = parse_args()
-    mp.set_start_method("spawn")
     main(args)
 

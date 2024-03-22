@@ -124,12 +124,14 @@ def main(args):
             if os.path.isdir(f'{args.out_path}/noSplint'):
                 os.system(f'rm -r {args.out_path}/noSplint')
 
-    processed_file=open(f'{args.out_path}/processed.log',writeMode)
 
     if not args.out_path.endswith('/'):
         args.out_path += '/'
     if not os.path.exists(args.out_path):
         os.mkdir(args.out_path)
+
+    processed_file=open(f'{args.out_path}/processed.log',writeMode)
+
 
 
     log_file = open(args.out_path + 'c3poa.log', 'a+')

@@ -100,10 +100,10 @@ def main(args):
     processed_reads=set()
     if resume:
         print(f'\n--resume option is True: Looking for existing log file in {args.out_path}')
-        if os.path.isfile(args.out_path + 'processed.log'):
+        if os.path.isfile(f'{args.out_path}/processed.log'):
             print('log file found')
             writeMode='a'
-            for line in open(args.out_path + 'processed.log'):
+            for line in open(f'{args.out_path}/processed.log'):
                 processed_reads.add(line.strip())
         else:
             print('no log file found')

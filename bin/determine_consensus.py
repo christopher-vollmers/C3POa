@@ -110,9 +110,10 @@ def determine_consensus(args, read, subreads, sub_qual, dangling_subreads, qual_
         racon_cons_fh = open(racon_cons_file, 'w+')
         tmp_files.append(racon_cons_file)
         racon_msgs_fh = open(tmp_dir + 'racon_messages.log', 'w+')
-
+        insert_length=np.median(insert_lengths)
+        window=str(min(int(insert_length*1.5),3000))
     # polish poa cons with the subreads
-        subprocess.run([racon, tmp_subread_file, overlap_file, abpoa_out, '-q', '5', '-t', '1'],
+        subprocess.run([racon, tmp_subread_file, overlap_file, abpoa_out, '-q', '5', '-t', '1','-w',window],
                        stdout=racon_cons_fh, stderr=racon_msgs_fh)
         racon_cons_fh.close()
         racon_msgs_fh.close()

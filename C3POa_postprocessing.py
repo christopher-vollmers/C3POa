@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # Roger Volden and Chris Vollmers
 
+# Updated cutoff threshold and rescues 4 adapter reads
+
 import sys
 import os
 import argparse
@@ -10,6 +12,8 @@ import editdistance as ld
 from glob import glob
 import gzip
 import gc
+import pickle
+
 
 
 VERSION = "v3.2  - Bombad Consensus"
@@ -195,7 +199,9 @@ def parse_blat(path, reads):
         for line in f:
             a = line.strip().split('\t')
             read_name, adapter, strand = a[9], a[13], a[8]
-            if int(a[5]) < 50 and float(a[0]) > 10:
+            #if int(a[5]) < 50 and float(a[0]) > 10:
+            #CHANGED THE ADAPTER CUTOFF TO BE HALF OF THE ADAPTER LENGTH
+            if int(a[5]) < 50 and (float(a[0]) >= float(a[14])*0.50):
                 if strand == '+':
                     start = int(a[11]) - int(a[15])
                     end = int(a[12]) + (int(a[14]) - int(a[16]))
@@ -209,31 +215,6 @@ def parse_blat(path, reads):
                                                         position))
     return adapter_dict
 
-def match_index(seq, seq_to_idx,minDist,maxDist):
-    dist_dict, dist_list = {}, []
-    # there needs to be a better/more efficient way to do this.
-    for idx_seq, idx in seq_to_idx.items():
-        idx=tuple(sorted(list(idx)))
-        if idx not in dist_dict:
-            dist_dict[idx] = []
-        query = seq
-        dist = ld.eval(query, idx_seq)
-        dist_dict[idx].append(dist)
-    for idx, distances in dist_dict.items():
-        dist_list.append((idx, min(distances)))
-    dist_list = sorted(dist_list, key=lambda x: x[1])
-    match = tuple()
-    if dist_list:
-        if dist_list[0][1]==0 and dist_list[1][1]!=0:
-            match = dist_list[0][0]
-        elif dist_list[0][1] < maxDist:
-            if len(dist_list)>1:
-                if dist_list[1][1] - dist_list[0][1] > minDist:
-                    match = dist_list[0][0]
-            else:
-                match = dist_list[0][0]
-
-    return match
 
 def write_fasta_file(args, path, adapter_dict, reads):
     undirectional = args.undirectional
@@ -247,6 +228,9 @@ def write_fasta_file(args, path, adapter_dict, reads):
 
     count=0
     for name, sequence in reads.items():
+        #keeping track of if the sequence has been rescued by 4 adapters
+        rescued = False
+        
         count+=1
         adapter_plus = sorted(adapter_dict[name]['+'],
                               key=lambda x: x[2], reverse=False)
@@ -263,6 +247,21 @@ def write_fasta_file(args, path, adapter_dict, reads):
             if adapter[0] != '-':
                 minus_list_name.append(adapter[0])
                 minus_positions.append(adapter[2])
+        
+        #looking for sequences that are potentially two sequences still together
+        #rescue if they are same pairs and have similar distances between the pairs
+        if len(plus_list_name) == 2 and len(minus_list_name) == 2:
+            first_dist = abs(minus_positions[0] - plus_positions[0])
+            second_dist = abs(minus_positions[1] - plus_positions[1])
+            #hope that this is near 0, or that the sequences are similar in length
+            dist_diff = abs(first_dist - second_dist)
+            if dist_diff < 0.10*len(sequence):
+                # since there is a good chance that there is sequence between them, keep only the first pair of adapters
+                plus_list_name = [plus_list_name[0]]
+                plus_positions = [plus_positions[0]]
+                minus_list_name = [minus_list_name[0]]
+                minus_positions = [minus_positions[0]]
+                rescued = True
 
         if len(plus_list_name) != 1 or len(minus_list_name) != 1:
             continue
@@ -286,6 +285,13 @@ def write_fasta_file(args, path, adapter_dict, reads):
         ada2 = sequence[minus_positions[0]:minus_positions[0]+40]
 
         name += '_' + str(len(seq))
+        # Add rescue metadata to the name
+        if rescued:
+            #r is for rescued, and 4 means 4 adapters 
+            name += '_r4'
+        else:
+            name += '_'
+                    
         if direction == '+':
             out.write('>%s\n%s\n' %(name, seq))
             outa.write('>%s\t%s\t%s\n' %(name, ada1, ada2))
@@ -316,7 +322,6 @@ def readSamplesheet(readFolder,sampleSheet):
     os.system('mkdir %s/demultiplexed' %(readFolder))
     indexDict={}
     lineCounter=0
-    SplintOnly=False
     outDict={}
     outDict['Undetermined']=readFolder+'/demultiplexed/Undetermined.fasta'
     for line in open(sampleSheet):
@@ -346,126 +351,13 @@ def readSamplesheet(readFolder,sampleSheet):
                 sequences=('_').join(a[2:])
                 indexDict[Splint][sequences]=libraryName
             else:
-                SplintOnly=True
-                indexDict[Splint]=libraryName
-
+                print('\t\tsamplesheet is not formatted properly: Needs at least one index column')
+                sys.exit(1)
     for libraryName,filePath in outDict.items():
         outTemp=open(filePath,'w')
         outTemp.close()
-    return indexDict, indexes, SplintOnly, countDict,outDict
+    return indexDict, indexes, countDict,outDict
 
-# print(indexDict)
-
-
-def findIndexSequence(sequence,pattern):
-
-    IUPACdict={}
-    IUPACdict['A']=set(['A'])
-    IUPACdict['T']=set(['T'])
-    IUPACdict['G']=set(['G'])
-    IUPACdict['C']=set(['C'])
-    IUPACdict['R']=set(['A','G'])
-    IUPACdict['Y']=set(['C','T'])
-    IUPACdict['S']=set(['G','C'])
-    IUPACdict['W']=set(['A','T'])
-    IUPACdict['K']=set(['G','T'])
-    IUPACdict['M']=set(['A','C'])
-    IUPACdict['B']=set(['C','G','T'])
-    IUPACdict['D']=set(['A','G','T'])
-    IUPACdict['H']=set(['A','C','T'])
-    IUPACdict['V']=set(['A','C','G'])
-    IUPACdict['N']=set(['A','T','G','C'])
-    UMI=''
-    valid=True
-    direction,range1,left,variable,right = pattern.split('.')
-    if direction not in ['5','3','E']:
-        print('invalid pattern, direction has to be 5 or 3')
-        valid=False
-        reason='invalid direction'
-    if direction=='3':
-        sequence=mm.revcomp(sequence)
-
-
-    start,end = int(range1.split(':')[0]),int(range1.split(':')[1])
-    left_variable_start=''
-    right_start=''
-    if len(sequence)<100:
-        valid=False
-        reason='sequence shorter than 100nt'
-
-    if valid:
-        UMIpattern=left+variable+right
-        valid=False
-        reason='no UMI pattern match'
-
-
-
-        for pos in range(start,end,1):
-            matches=0
-            match=sequence[pos:pos+len(UMIpattern)].upper()
-            for index in range(0,len(UMIpattern),1):
-                v_base=UMIpattern[index]
-                s_base=match[index]
-                if s_base in IUPACdict[v_base]:
-                    matches+=1
-            if len(UMIpattern)==matches:
-                if right:
-                    UMI=match[len(left):-len(right)]
-                else:
-                    UMI=match[len(left):]
-                valid=True
-                break
-
-    if valid:
-        return UMI,'UMI found that matched pattern '+pattern
-    else:
-        return '', reason
-
-
-
-
-
-counter=0
-def demultiplex(seq,seq_to_idx,minDist,maxDist,libraryName,number,total):
-    if not libraryName:
-        matchSet=[]
-        for index,entries in seq_to_idx.items():
-            if index[0]=='E':
-                readSeq, reason = findIndexSequence(seq,'5'+index[2:])
-                if readSeq:
-                    matchSet.append(match_index(readSeq,entries,minDist,maxDist))
-                    if index[1]=='3':
-                        seq=mm.revcomp(seq)
-
-                else:
-                    readSeq, reason = findIndexSequence(seq,'3'+index[2:])
-                    if readSeq:
-                        matchSet.append(match_index(readSeq,entries,minDist,maxDist))
-                        if index[1]=='5':
-                            seq=mm.revcomp(seq)
-                    else:
-                        matchSet.append('Undetermined')
-            else:
-                readSeq, reason = findIndexSequence(seq,index)
-                matchSet.append(match_index(readSeq,entries,minDist,maxDist))
-
-        if 'Undetermined' in matchSet:
-            libraryName = 'Undetermined'
-        elif len(matchSet)==1:
-            if len(matchSet[0])==1:
-                libraryName = matchSet[0][0]
-            else:
-                libraryName = 'Undetermined'
-        else:
-            root=set(matchSet[0])
-            for matches in matchSet[1:]:
-                root=root & set(matches)
-            if len(root)==1:
-                libraryName = list(root)[0]
-            else:
-                libraryName = 'Undetermined'
-    print(f'\tfinished read {number} of {total} reads total ~{str(round((number/total)*100,2))}%',' '*20, end='\r')
-    return libraryName,seq
 
 
 def main(args):
@@ -499,7 +391,7 @@ def main(args):
     if args.samplesheet:
         print('\n\nStarting to demultiplex \n\n')
         print('Reading sample sheet')
-        indexDict, indexes, SplintOnly, countDict,outDict = readSamplesheet(input_folder,args.samplesheet)
+        indexDict, indexes, countDict,outDict = readSamplesheet(input_folder,args.samplesheet)
         for folder in os.listdir(input_folder):
             counter=0
             subfolder=input_folder+'/'+folder
@@ -515,6 +407,11 @@ def main(args):
                                 seq_to_idx[indexes[i]][sequences[i]]=set()
                             seq_to_idx[indexes[i]][sequences[i]].add(name)
 
+                    results_pickle=subfolder+'/results.pickle'
+                    seq_to_idx_pickle=subfolder+'/sampleSheet.pickle'
+                    seq_to_idx_pickle_fh=open(seq_to_idx_pickle,'wb')
+                    pickle.dump(seq_to_idx,seq_to_idx_pickle_fh)
+                    seq_to_idx_pickle_fh.close()
                     readFile=subfolder+'/R2C2_full_length_consensus_reads.fasta'
                     print('Demultiplexing file '+readFile)
                     if args.compress_output:
@@ -537,22 +434,15 @@ def main(args):
                         tmp_reads.append(read)
                         current_num += 1
                         if current_num == target:
-                            pool = mp.Pool(args.threads)
-                            length_tmp_reads=len(tmp_reads)
-                            for index in range(length_tmp_reads):
-                                tmp_read=tmp_reads[index]
-                                name,seq = tmp_read[0],tmp_read[1]
-                                libraryName=''
-                                if len(seq)<30:
-                                    libraryName = 'Undetermined'
-                                elif SplintOnly:
-                                    libraryName = indexDict[folder]
-                                results[name]=pool.apply_async(demultiplex,[seq,seq_to_idx,minDist,maxDist,libraryName,index+current_num-length_tmp_reads,total_reads])
-                            pool.close()
-                            pool.join()
-                            gc.collect()
+                            tmp_reads_pickle=subfolder+'/tmp_reads.pickle'
+                            tmp_reads_pickle_fh=open(tmp_reads_pickle,'wb')
+                            pickle.dump(tmp_reads,tmp_reads_pickle_fh)
+                            tmp_reads_pickle_fh.close()
+                            results_pickle=subfolder+'/results.pickle'
+                            os.system(f'python3 {C3POaPath}/demultiplex.py -s {tmp_reads_pickle} -i {seq_to_idx_pickle} -m {minDist} -M {maxDist} -c {current_num} -t {total_reads} -r {results_pickle} -n {args.threads}')
+                            results=pickle.load(open(results_pickle,'rb'))
                             for name in results:
-                                libraryName,seq=results[name].get()
+                                libraryName,seq=results[name]
                                 fh=open(outDict[libraryName],'a')
                                 fh.write('>%s\n%s\n' %(name,seq))
                                 fh.close()
@@ -567,18 +457,6 @@ def main(args):
 
         print('\nFinished demultiplexing')
 
-
-def batchProcess(reads,seq_to_idx,minDist,maxDist,SplintOnly,batch):
-    resultList=[]
-    for name,seq in tqdm(reads,position=batch,ncols=100):
-          if len(seq)<30:
-               libraryName = 'Undetermined'
-          elif SplintOnly:
-               libraryName = indexDict[folder]
-          else:
-               libraryName, seq = demultiplex(seq,seq_to_idx,minDist,maxDist)
-          resultList.append((name,seq,libraryName))
-    return (resultList)
 
 
 if __name__ == '__main__':
